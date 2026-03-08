@@ -1,16 +1,20 @@
 /**
  * RecommendationFeed.js
- * Displays content recommendations (videos, reels, posts) from real platform data.
- * - Hover-to-play embeds (YouTube / Vimeo / Dailymotion) after 900ms hold
- * - Platform filter tabs, skeleton loaders, optimistic bookmark
- * - FIX: sets fetchedQuery on both success AND failure so retries don't loop
+ *
+ * TRUE infinite scroll — like YouTube:
+ * - Fetches page 1 on mount
+ * - When user scrolls to bottom, fetches page 2, 3, 4... from backend
+ * - Each page uses a varied query (e.g. "cats best", "cats trending", "cats 2024")
+ *   so results are always fresh and different — never "end of results"
+ * - New cards append below existing ones
+ * - Deduplicates by item ID across pages
  */
 import { useState, useEffect, useRef, useCallback } from "react";
-import { recommendationsAPI, bookmarksAPI } from "../../utils/api";
+import { bookmarksAPI } from "../../utils/api";
 import { useAuth } from "../../context/AuthContext";
 import toast from "react-hot-toast";
 
-// ── Platform metadata ─────────────────────────────────────────────────────────
+// ─── Platform metadata ────────────────────────────────────────────────────────
 const PLAT = {
   youtube: {
     color: "#FF0000",
@@ -62,7 +66,6 @@ const PLAT = {
     typeLabel: "Reel",
   },
 };
-
 const TYPE_ICONS = {
   video: "▶",
   short: "📱",
@@ -71,7 +74,7 @@ const TYPE_ICONS = {
   post: "📄",
 };
 
-// ── Skeleton card ─────────────────────────────────────────────────────────────
+// ─── Skeleton ────────────────────────────────────────────────────────────────
 function SkeletonCard() {
   return (
     <div
@@ -80,7 +83,6 @@ function SkeletonCard() {
         border: "1px solid rgba(255,255,255,0.06)",
         borderRadius: 12,
         overflow: "hidden",
-        animation: "shimmer 1.6s ease infinite",
       }}
     >
       <div
@@ -90,7 +92,7 @@ function SkeletonCard() {
           background:
             "linear-gradient(90deg,rgba(255,255,255,0.03) 25%,rgba(255,255,255,0.07) 50%,rgba(255,255,255,0.03) 75%)",
           backgroundSize: "200% 100%",
-          animation: "shimmer 1.4s ease infinite",
+          animation: "sl-shimmer 1.4s ease infinite",
         }}
       />
       <div
@@ -140,7 +142,7 @@ function SkeletonCard() {
   );
 }
 
-// ── Embed preview (iframe on hover) ───────────────────────────────────────────
+// ─── Embed preview ────────────────────────────────────────────────────────────
 function PreviewEmbed({ embedUrl, onClose }) {
   return (
     <div
@@ -163,7 +165,7 @@ function PreviewEmbed({ embedUrl, onClose }) {
           border: "none",
           display: "block",
         }}
-        title="Video preview"
+        title="Preview"
         loading="lazy"
       />
       <button
@@ -176,8 +178,8 @@ function PreviewEmbed({ embedUrl, onClose }) {
           position: "absolute",
           top: 8,
           right: 8,
-          background: "rgba(0,0,0,0.75)",
-          border: "1px solid rgba(255,255,255,0.3)",
+          background: "rgba(0,0,0,.8)",
+          border: "1px solid rgba(255,255,255,.3)",
           borderRadius: "50%",
           width: 28,
           height: 28,
@@ -196,13 +198,14 @@ function PreviewEmbed({ embedUrl, onClose }) {
   );
 }
 
-// ── Recommendation card ───────────────────────────────────────────────────────
-function RecommendationCard({ item, compact, onBookmarkItem }) {
+// ─── Card ─────────────────────────────────────────────────────────────────────
+function RecommendationCard({ item, compact, onBookmark }) {
   const [hovered, setHovered] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
-  const hoverTimer = useRef(null);
+  const holdTimer = useRef(null);
+
   const p = PLAT[item.platform] || {
     color: "#00d4ff",
     bg: "rgba(0,212,255,0.1)",
@@ -211,28 +214,22 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
     typeLabel: "Content",
   };
 
-  const handleMouseEnter = () => {
+  const onEnter = () => {
     setHovered(true);
-    if (item.previewable && item.embedUrl) {
-      hoverTimer.current = setTimeout(() => setPreviewing(true), 900);
-    }
+    if (item.previewable && item.embedUrl)
+      holdTimer.current = setTimeout(() => setPreviewing(true), 900);
   };
-
-  const handleMouseLeave = () => {
+  const onLeave = () => {
     setHovered(false);
-    clearTimeout(hoverTimer.current);
-    // Don't kill preview if user moves back quickly — only kill on sustained leave
-    setTimeout(() => {
-      if (!hovered) setPreviewing(false);
-    }, 300);
+    clearTimeout(holdTimer.current);
+    setTimeout(() => setPreviewing(false), 300);
   };
-
-  const handleBookmark = async (e) => {
+  const onBm = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     if (bookmarked) return;
     setBookmarked(true);
-    await onBookmarkItem(item);
+    await onBookmark(item);
   };
 
   return (
@@ -241,8 +238,8 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
       target="_blank"
       rel="noopener noreferrer"
       style={{ textDecoration: "none", display: "block" }}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
     >
       <div
         style={{
@@ -256,8 +253,8 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
           transition: "all 200ms cubic-bezier(.16,1,.3,1)",
           transform: hovered ? "translateY(-4px)" : "none",
           boxShadow: hovered
-            ? `0 16px 40px ${p.color}18, 0 4px 16px rgba(0,0,0,0.4)`
-            : "0 2px 8px rgba(0,0,0,0.2)",
+            ? `0 16px 40px ${p.color}18,0 4px 16px rgba(0,0,0,.4)`
+            : "0 2px 8px rgba(0,0,0,.2)",
           position: "relative",
         }}
       >
@@ -302,7 +299,7 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
                     flexDirection: "column",
                     alignItems: "center",
                     justifyContent: "center",
-                    background: `linear-gradient(135deg, ${p.color}14, rgba(0,0,0,0.5))`,
+                    background: `linear-gradient(135deg,${p.color}14,rgba(0,0,0,.5))`,
                     gap: 6,
                   }}
                 >
@@ -322,8 +319,6 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
                   </span>
                 </div>
               )}
-
-              {/* Hover overlay */}
               {hovered && (
                 <div
                   style={{
@@ -332,14 +327,13 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    background: "rgba(0,0,0,0.3)",
-                    animation: "fadeIn 0.15s ease",
+                    background: "rgba(0,0,0,.3)",
                   }}
                 >
                   {item.previewable ? (
                     <div
                       style={{
-                        background: "rgba(0,0,0,0.85)",
+                        background: "rgba(0,0,0,.85)",
                         border: `2px solid ${p.color}`,
                         borderRadius: "50%",
                         width: 46,
@@ -357,7 +351,7 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
                   ) : (
                     <div
                       style={{
-                        background: "rgba(0,0,0,0.7)",
+                        background: "rgba(0,0,0,.7)",
                         border: `1px solid ${p.color}60`,
                         borderRadius: 8,
                         padding: "5px 14px",
@@ -372,8 +366,6 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
                   )}
                 </div>
               )}
-
-              {/* Hold hint */}
               {hovered && item.previewable && !previewing && (
                 <div
                   style={{
@@ -383,8 +375,7 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
                     transform: "translateX(-50%)",
                     fontFamily: "var(--f-mono)",
                     fontSize: "0.52rem",
-                    color: "rgba(255,255,255,0.45)",
-                    letterSpacing: "0.08em",
+                    color: "rgba(255,255,255,.45)",
                     whiteSpace: "nowrap",
                     pointerEvents: "none",
                   }}
@@ -392,8 +383,6 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
                   hold to preview
                 </div>
               )}
-
-              {/* Type badge */}
               <div
                 style={{
                   position: "absolute",
@@ -407,7 +396,6 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
                   fontSize: "0.54rem",
                   fontWeight: 700,
                   color: p.color,
-                  letterSpacing: "0.07em",
                   display: "flex",
                   alignItems: "center",
                   gap: 4,
@@ -417,15 +405,13 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
                 <span>{TYPE_ICONS[item.type] || p.icon}</span>
                 <span>{p.typeLabel.toUpperCase()}</span>
               </div>
-
-              {/* Duration */}
               {item.duration && (
                 <div
                   style={{
                     position: "absolute",
                     bottom: 8,
                     right: 8,
-                    background: "rgba(0,0,0,0.85)",
+                    background: "rgba(0,0,0,.85)",
                     borderRadius: 4,
                     padding: "2px 6px",
                     fontFamily: "var(--f-mono)",
@@ -453,12 +439,11 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
               WebkitLineClamp: 2,
               WebkitBoxOrient: "vertical",
               overflow: "hidden",
-              transition: "color 0.12s",
+              transition: "color .12s",
             }}
           >
             {item.title || "Untitled"}
           </p>
-
           <div
             style={{
               display: "flex",
@@ -478,7 +463,6 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
                 padding: "2px 7px",
                 borderRadius: 99,
                 border: `1px solid ${p.color}35`,
-                letterSpacing: "0.05em",
               }}
             >
               {p.icon} {p.label}
@@ -511,7 +495,6 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
               </span>
             )}
           </div>
-
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {item.views && (
               <span
@@ -559,20 +542,17 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
               </span>
             )}
             <button
-              onClick={handleBookmark}
-              title={bookmarked ? "Saved" : "Save to bookmarks"}
+              onClick={onBm}
+              title={bookmarked ? "Saved" : "Bookmark"}
               style={{
-                background: bookmarked
-                  ? "rgba(251,191,36,0.15)"
-                  : "transparent",
-                border: `1px solid ${bookmarked ? "rgba(251,191,36,0.5)" : "rgba(255,255,255,0.1)"}`,
+                background: bookmarked ? "rgba(251,191,36,.15)" : "transparent",
+                border: `1px solid ${bookmarked ? "rgba(251,191,36,.5)" : "rgba(255,255,255,.1)"}`,
                 borderRadius: 4,
                 padding: "2px 7px",
                 marginLeft: item.timeAgo ? 0 : "auto",
-                color: bookmarked ? "var(--c-gold)" : "var(--c-text4)",
+                color: bookmarked ? "var(--c-gold,#fbbf24)" : "var(--c-text4)",
                 fontSize: "0.75rem",
                 cursor: "pointer",
-                transition: "all 120ms",
               }}
             >
               {bookmarked ? "★" : "☆"}
@@ -584,7 +564,7 @@ function RecommendationCard({ item, compact, onBookmarkItem }) {
   );
 }
 
-// ── Platform filter tabs ──────────────────────────────────────────────────────
+// ─── Platform filter tabs ─────────────────────────────────────────────────────
 function PlatformTabs({ available, active, onChange }) {
   return (
     <div
@@ -601,7 +581,7 @@ function PlatformTabs({ available, active, onChange }) {
           pid === "all"
             ? { color: "var(--c-cyan)", label: "All", icon: "⬡" }
             : PLAT[pid] || { color: "#00d4ff", label: pid, icon: "⬡" };
-        const isActive = active === pid;
+        const on = active === pid;
         return (
           <button
             key={pid}
@@ -611,13 +591,13 @@ function PlatformTabs({ available, active, onChange }) {
               borderRadius: 99,
               whiteSpace: "nowrap",
               flexShrink: 0,
-              background: isActive ? `${p.color}1a` : "rgba(255,255,255,0.04)",
-              border: `1px solid ${isActive ? p.color + "60" : "rgba(255,255,255,0.08)"}`,
-              color: isActive ? p.color : "var(--c-text3)",
+              background: on ? `${p.color}1a` : "rgba(255,255,255,.04)",
+              border: `1px solid ${on ? p.color + "60" : "rgba(255,255,255,.08)"}`,
+              color: on ? p.color : "var(--c-text3)",
               fontFamily: "var(--f-display)",
               fontSize: "0.68rem",
               fontWeight: 700,
-              letterSpacing: "0.03em",
+              cursor: "pointer",
               transition: "all 130ms",
             }}
           >
@@ -629,87 +609,221 @@ function PlatformTabs({ available, active, onChange }) {
   );
 }
 
-// ── Main RecommendationFeed ───────────────────────────────────────────────────
+// ─── YouTube-style bottom spinner ─────────────────────────────────────────────
+function BottomSpinner() {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        gap: 10,
+        padding: "32px 0",
+        color: "var(--c-text4)",
+        fontFamily: "var(--f-mono)",
+        fontSize: "0.68rem",
+        letterSpacing: "0.14em",
+      }}
+    >
+      <div
+        style={{
+          width: 20,
+          height: 20,
+          borderRadius: "50%",
+          border: "2px solid rgba(0,212,255,.15)",
+          borderTop: "2px solid var(--c-cyan)",
+          animation: "sl-spin 0.7s linear infinite",
+          flexShrink: 0,
+        }}
+      />
+      Loading more videos...
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 export default function RecommendationFeed({
   query,
   platform = "all",
   title = "🎬 Recommended",
   compact = false,
-  limit = 8,
   showFilters = true,
   style: extraStyle,
 }) {
-  const [items, setItems] = useState([]);
-  const [byPlatform, setByPlatform] = useState({});
-  const [loading, setLoading] = useState(false);
+  const [items, setItems] = useState([]); // all appended items
+  const [seenIds, setSeenIds] = useState(new Set()); // dedup tracker
+  const [byPlatform, setByPlatform] = useState({}); // for tab filter
+  const [page, setPage] = useState(0); // 0 = not started
+  const [initialLoading, setInitialLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
   const [activePlatform, setActivePlatform] = useState("all");
-  // KEY FIX: track attempted query (set on both success + failure) to prevent infinite retry
-  const [attemptedQuery, setAttemptedQuery] = useState(null);
+  const [lastQuery, setLastQuery] = useState(null);
+
   const { user } = useAuth();
+  const sentinelRef = useRef(null);
+  const observerRef = useRef(null);
+  const loadingRef = useRef(false); // ref mirror so observer callback never reads stale state
+  const pageRef = useRef(0);
+  const queryRef = useRef(null);
+  const platformRef = useRef("all");
 
-  const fetchData = useCallback(
-    async (q, plat) => {
-      if (!q?.trim()) return;
-      setLoading(true);
+  // ── Fetch a single page and append results ────────────────────────────────
+  const fetchPage = useCallback(async (q, plat, pageNum) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+
+    const isFirst = pageNum === 1;
+    if (isFirst) setInitialLoading(true);
+    else setLoadingMore(true);
+
+    try {
+      // Call the API — page param goes to backend which uses varied queries
+      const params = new URLSearchParams({
+        q,
+        platform: plat,
+        limit: "12",
+        page: String(pageNum),
+      });
+      const res = await fetch(`/api/recommendations?${params}`, {
+        headers: {
+          "Content-Type": "application/json",
+          ...(localStorage.getItem("sl_token")
+            ? { Authorization: `Bearer ${localStorage.getItem("sl_token")}` }
+            : {}),
+        },
+      });
+      if (!res.ok) throw new Error("Request failed");
+      const json = await res.json();
+      const data = json.data || {};
+      const newFlat = data.flat || [];
+      const newByPlat = data.byPlatform || {};
+
+      setItems((prev) => {
+        setSeenIds((ids) => {
+          const next = new Set(ids);
+          const fresh = newFlat.filter((item) => !next.has(item.id));
+          fresh.forEach((item) => next.add(item.id));
+          // Append fresh items to the list
+          // (we return prev+fresh from inside the setSeenIds callback trick)
+          return next;
+        });
+        // Compute fresh items using seenIds snapshot — use functional update with ref
+        const fresh = newFlat.filter(
+          (item) => !seenIdsRef.current.has(item.id),
+        );
+        return isFirst ? fresh : [...prev, ...fresh];
+      });
+
+      // Merge byPlatform
+      setByPlatform((prev) => {
+        const merged = { ...prev };
+        for (const [pid, pItems] of Object.entries(newByPlat)) {
+          merged[pid] = isFirst ? pItems : [...(prev[pid] || []), ...pItems];
+        }
+        return isFirst ? newByPlat : merged;
+      });
+
       setError(null);
-      // Set attempted immediately so we don't loop
-      setAttemptedQuery(q);
+    } catch (err) {
+      if (isFirst)
+        setError("Could not load recommendations. Is your backend running?");
+    } finally {
+      if (isFirst) setInitialLoading(false);
+      else setLoadingMore(false);
+      loadingRef.current = false;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep a ref to seenIds for use inside setItems callback
+  const seenIdsRef = useRef(new Set());
+  useEffect(() => {
+    seenIdsRef.current = seenIds;
+  }, [seenIds]);
+
+  // ── Reset and fetch page 1 when query changes ─────────────────────────────
+  useEffect(() => {
+    if (!query || query === lastQuery) return;
+
+    // Reset all state for new query
+    setItems([]);
+    setSeenIds(new Set());
+    seenIdsRef.current = new Set();
+    setByPlatform({});
+    setPage(1);
+    setActivePlatform("all");
+    setError(null);
+    setLastQuery(query);
+    pageRef.current = 1;
+    queryRef.current = query;
+    platformRef.current = platform;
+
+    fetchPage(query, platform, 1);
+  }, [query, platform, lastQuery, fetchPage]);
+
+  // ── IntersectionObserver: load next page when sentinel enters viewport ────
+  useEffect(() => {
+    if (observerRef.current) observerRef.current.disconnect();
+
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0].isIntersecting) return;
+        if (loadingRef.current) return;
+        if (!queryRef.current) return;
+
+        // Load next page
+        const nextPage = pageRef.current + 1;
+        pageRef.current = nextPage;
+        setPage(nextPage);
+        fetchPage(queryRef.current, platformRef.current, nextPage);
+      },
+      {
+        threshold: 0,
+        rootMargin: "0px 0px 400px 0px", // trigger 400px early — feels instant
+      },
+    );
+
+    observerRef.current.observe(sentinel);
+    return () => observerRef.current?.disconnect();
+  }, [items.length, fetchPage]); // Re-bind when items change so sentinel is in DOM
+
+  // ── Bookmark ──────────────────────────────────────────────────────────────
+  const handleBookmark = useCallback(
+    async (item) => {
+      if (!user) {
+        toast.error("Login to save bookmarks");
+        return;
+      }
       try {
-        const res = await recommendationsAPI.get(q, plat, limit);
-        const data = res.data.data;
-        setItems(data.flat || []);
-        setByPlatform(data.byPlatform || {});
-        setActivePlatform("all");
-      } catch (err) {
-        const msg =
-          err?.response?.status === 0 || err?.message?.includes("Network")
-            ? "Backend server is offline — start your backend to load recommendations"
-            : "Could not load recommendations";
-        setError(msg);
-        setItems([]);
-      } finally {
-        setLoading(false);
+        await bookmarksAPI.create({
+          title: item.title,
+          url: item.url,
+          platform: item.platform,
+          thumbnail: item.thumbnail || "",
+          description: item.author ? `By ${item.author}` : "",
+        });
+        toast.success("Saved ★", { icon: "★" });
+      } catch {
+        toast.error("Failed to save");
       }
     },
-    [limit],
+    [user],
   );
 
-  useEffect(() => {
-    // Only fetch if query changed AND we haven't already tried this exact query
-    if (query && query !== attemptedQuery) {
-      fetchData(query, platform);
-    }
-  }, [query, platform, fetchData, attemptedQuery]);
-
-  const handleBookmarkItem = async (item) => {
-    if (!user) {
-      toast.error("Login to save bookmarks");
-      return;
-    }
-    try {
-      await bookmarksAPI.create({
-        title: item.title,
-        url: item.url,
-        platform: item.platform,
-        thumbnail: item.thumbnail || "",
-        description: item.author ? `By ${item.author}` : "",
-      });
-      toast.success("Saved to bookmarks ★", { icon: "★" });
-    } catch {
-      toast.error("Failed to save");
-    }
-  };
-
+  // ── Derive display list ───────────────────────────────────────────────────
   const displayItems =
     activePlatform === "all" ? items : byPlatform[activePlatform] || [];
   const availablePlatforms = Object.keys(byPlatform);
   const gridCols = compact
-    ? "repeat(auto-fill, minmax(190px, 1fr))"
-    : "repeat(auto-fill, minmax(255px, 1fr))";
+    ? "repeat(auto-fill,minmax(190px,1fr))"
+    : "repeat(auto-fill,minmax(255px,1fr))";
 
+  // ── Don't render if no query or empty first load ──────────────────────────
   if (!query) return null;
+  if (!initialLoading && lastQuery && !error && items.length === 0) return null;
 
   return (
     <section style={{ marginBottom: 48, ...extraStyle }}>
@@ -741,11 +855,11 @@ export default function RecommendationFeed({
               height: 1,
               width: 60,
               background:
-                "linear-gradient(90deg, rgba(0,212,255,0.2), transparent)",
+                "linear-gradient(90deg,rgba(0,212,255,.2),transparent)",
             }}
           />
         </div>
-        {!loading && items.length > 0 && (
+        {items.length > 0 && (
           <span
             style={{
               fontFamily: "var(--f-mono)",
@@ -753,24 +867,24 @@ export default function RecommendationFeed({
               color: "var(--c-text4)",
             }}
           >
-            {displayItems.length} results
+            {displayItems.length} videos
           </span>
         )}
       </div>
 
       {/* Platform tabs */}
-      {showFilters && !loading && availablePlatforms.length > 1 && (
+      {showFilters && !initialLoading && availablePlatforms.length > 1 && (
         <div style={{ marginBottom: 14 }}>
           <PlatformTabs
             available={availablePlatforms}
             active={activePlatform}
-            onChange={setActivePlatform}
+            onChange={(p) => setActivePlatform(p)}
           />
         </div>
       )}
 
-      {/* Loading */}
-      {loading && (
+      {/* Initial skeleton */}
+      {initialLoading && (
         <div
           style={{
             display: "grid",
@@ -785,13 +899,13 @@ export default function RecommendationFeed({
       )}
 
       {/* Error */}
-      {error && !loading && (
+      {error && !initialLoading && (
         <div
           style={{
             padding: "18px 20px",
             textAlign: "center",
-            background: "rgba(255,255,255,0.02)",
-            border: "1px dashed rgba(255,255,255,0.08)",
+            background: "rgba(255,255,255,.02)",
+            border: "1px dashed rgba(255,255,255,.08)",
             borderRadius: 10,
             fontFamily: "var(--f-mono)",
             fontSize: "0.74rem",
@@ -806,7 +920,7 @@ export default function RecommendationFeed({
           <span>{error}</span>
           <button
             onClick={() => {
-              setAttemptedQuery(null);
+              setLastQuery(null);
             }}
             style={{
               background: "none",
@@ -824,8 +938,8 @@ export default function RecommendationFeed({
         </div>
       )}
 
-      {/* Cards */}
-      {!loading && !error && displayItems.length > 0 && (
+      {/* Cards grid */}
+      {!initialLoading && !error && displayItems.length > 0 && (
         <div
           style={{
             display: "grid",
@@ -838,32 +952,30 @@ export default function RecommendationFeed({
               key={item.id}
               item={item}
               compact={compact}
-              onBookmarkItem={handleBookmarkItem}
+              onBookmark={handleBookmark}
             />
           ))}
         </div>
       )}
 
-      {/* Empty */}
-      {!loading && !error && displayItems.length === 0 && attemptedQuery && (
-        <div
-          style={{
-            padding: "36px 20px",
-            textAlign: "center",
-            border: "1px dashed rgba(255,255,255,0.07)",
-            borderRadius: 12,
-            fontFamily: "var(--f-mono)",
-            fontSize: "0.74rem",
-            color: "var(--c-text4)",
-          }}
-        >
-          No previews available for "{attemptedQuery}"
-        </div>
+      {/* ── Infinite scroll zone ── */}
+      {!initialLoading && !error && displayItems.length > 0 && (
+        <>
+          {/* YouTube-style spinner while next page loads */}
+          {loadingMore && <BottomSpinner />}
+
+          {/* Sentinel — IntersectionObserver watches this */}
+          <div
+            ref={sentinelRef}
+            style={{ height: 4, marginTop: 20 }}
+            aria-hidden="true"
+          />
+        </>
       )}
 
       <style>{`
-        @keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
-        @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes sl-shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+        @keyframes sl-spin    { to   { transform: rotate(360deg); } }
       `}</style>
     </section>
   );

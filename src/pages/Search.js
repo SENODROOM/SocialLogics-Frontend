@@ -23,6 +23,30 @@ const SORT_OPTIONS = [
   { id: "az", label: "A → Z" },
 ];
 
+/* ── Compact pill-style user count badge (like YouTube 6.7K+) ── */
+function UserBadge({ count }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "1px 6px",
+        borderRadius: 99,
+        background: "rgba(255,255,255,0.07)",
+        border: "1px solid rgba(255,255,255,0.1)",
+        fontFamily: "var(--f-mono)",
+        fontSize: "0.58rem",
+        color: "var(--c-text3)",
+        letterSpacing: "0.02em",
+        whiteSpace: "nowrap",
+        lineHeight: 1.5,
+      }}
+    >
+      👥 {count}
+    </span>
+  );
+}
+
 function ResultCard({ result, query, onBookmark, rank }) {
   const [hovered, setHovered] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
@@ -32,22 +56,33 @@ function ResultCard({ result, query, onBookmark, rank }) {
   const extraUrls = Object.entries(urls).filter(([k]) => k !== "main");
 
   const openUrl = (url) => {
+    if (!url) return;
     window.open(url, "_blank", "noopener,noreferrer");
     searchAPI.recordClick({ platform: result.platform, query }).catch(() => {});
   };
-  const copyUrl = async (e) => {
+
+  const copyUrl = (e) => {
     e.stopPropagation();
-    await navigator.clipboard.writeText(result.mainUrl || urls.main);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
-    toast.success("URL copied!", { duration: 1500 });
+    const url = result.mainUrl || urls.main;
+    if (!url) return;
+    navigator.clipboard
+      .writeText(url)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1800);
+        toast.success("URL copied!", { duration: 1500 });
+      })
+      .catch(() => toast.error("Copy failed"));
   };
-  const handleBookmark = async (e) => {
+
+  const handleBookmark = (e) => {
     e.stopPropagation();
     if (bookmarked) return;
     setBookmarked(true);
-    await onBookmark(result);
+    onBookmark(result);
   };
+
+  const mainUrl = result.mainUrl || urls.main;
 
   return (
     <article
@@ -58,30 +93,33 @@ function ResultCard({ result, query, onBookmark, rank }) {
         border: `1px solid ${hovered ? result.color + "70" : "rgba(255,255,255,0.07)"}`,
         borderLeft: `3px solid ${result.color}`,
         borderRadius: 12,
-        padding: "18px 20px",
+        padding: "14px 16px",
         transition: "all 220ms cubic-bezier(.16,1,.3,1)",
-        transform: hovered ? "translateY(-3px)" : "none",
+        transform: hovered ? "translateY(-2px)" : "none",
         boxShadow: hovered
-          ? `0 14px 40px ${result.color}18,0 4px 16px rgba(0,0,0,.4)`
+          ? `0 10px 30px ${result.color}18,0 4px 12px rgba(0,0,0,.35)`
           : "0 2px 8px rgba(0,0,0,.2)",
         display: "flex",
         flexDirection: "column",
-        gap: 12,
+        gap: 10,
         position: "relative",
+        cursor: "pointer",
       }}
+      onClick={() => openUrl(mainUrl)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
+      {/* Top rank badge */}
       {rank <= 3 && (
         <div
           style={{
             position: "absolute",
-            top: 10,
-            right: 10,
+            top: 8,
+            right: 8,
             fontFamily: "var(--f-display)",
-            fontSize: "0.58rem",
+            fontSize: "0.55rem",
             fontWeight: 800,
-            padding: "2px 8px",
+            padding: "1px 6px",
             borderRadius: 99,
             background:
               rank === 1
@@ -92,17 +130,20 @@ function ResultCard({ result, query, onBookmark, rank }) {
             border: `1px solid ${rank === 1 ? "rgba(251,191,36,.4)" : rank === 2 ? "rgba(180,180,180,.3)" : "rgba(200,120,80,.3)"}`,
             color: rank === 1 ? "#fbbf24" : rank === 2 ? "#a0aec0" : "#c87840",
             letterSpacing: "0.1em",
+            pointerEvents: "none",
           }}
         >
           #{rank}
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+
+      {/* Header row: icon + name + user count */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div
           style={{
-            width: 46,
-            height: 46,
-            borderRadius: 10,
+            width: 38,
+            height: 38,
+            borderRadius: 8,
             flexShrink: 0,
             border: `1.5px solid ${result.color}55`,
             background: `${result.color}14`,
@@ -111,35 +152,39 @@ function ResultCard({ result, query, onBookmark, rank }) {
             justifyContent: "center",
             color: result.color,
             fontWeight: 900,
-            fontSize: "1.15rem",
+            fontSize: "1rem",
           }}
         >
           {result.icon}
         </div>
+
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
               fontFamily: "var(--f-display)",
-              fontSize: "0.95rem",
+              fontSize: "0.88rem",
               fontWeight: 800,
               color: result.color,
+              lineHeight: 1.2,
             }}
           >
             {result.name}
           </div>
+          {/* Content type pills — small like YouTube chips */}
           <div
-            style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 5 }}
+            style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 3 }}
           >
-            {(result.contentTypes || []).slice(0, 4).map((ct) => (
+            {(result.contentTypes || []).slice(0, 3).map((ct) => (
               <span
                 key={ct}
                 style={{
                   fontFamily: "var(--f-mono)",
-                  fontSize: "0.57rem",
-                  padding: "2px 7px",
-                  border: `1px solid ${result.color}30`,
+                  fontSize: "0.52rem",
+                  padding: "1px 5px",
+                  border: `1px solid ${result.color}28`,
                   borderRadius: 99,
-                  color: result.color + "cc",
+                  color: result.color + "aa",
+                  whiteSpace: "nowrap",
                 }}
               >
                 {ct}
@@ -147,152 +192,159 @@ function ResultCard({ result, query, onBookmark, rank }) {
             ))}
           </div>
         </div>
-        <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <div
-            style={{
-              fontFamily: "var(--f-display)",
-              fontSize: "0.8rem",
-              fontWeight: 700,
-            }}
-          >
-            {result.monthlyUsers}
-          </div>
-          <div
-            style={{
-              fontFamily: "var(--f-mono)",
-              fontSize: "0.52rem",
-              color: "var(--c-text4)",
-              letterSpacing: "0.05em",
-            }}
-          >
-            monthly users
-          </div>
-        </div>
+
+        {/* Monthly users — compact badge on the right */}
+        <UserBadge count={result.monthlyUsers} />
       </div>
+
+      {/* URL preview */}
       <div
         style={{
           fontFamily: "var(--f-mono)",
-          fontSize: "0.63rem",
+          fontSize: "0.58rem",
           color: "var(--c-text4)",
-          padding: "6px 10px",
-          background: "rgba(0,0,0,.25)",
-          borderRadius: 6,
+          padding: "4px 8px",
+          background: "rgba(0,0,0,.22)",
+          borderRadius: 5,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
         }}
       >
-        {result.mainUrl || urls.main}
+        {mainUrl}
       </div>
-      <button
-        onClick={() => openUrl(result.mainUrl || urls.main)}
-        style={{
-          width: "100%",
-          padding: "11px 16px",
-          background: `${result.color}${hovered ? "2e" : "1a"}`,
-          border: `1px solid ${result.color}${hovered ? "80" : "55"}`,
-          borderRadius: 8,
-          color: result.color,
-          fontFamily: "var(--f-display)",
-          fontWeight: 800,
-          fontSize: "0.75rem",
-          letterSpacing: "0.06em",
-          textTransform: "uppercase",
-          transition: "all 150ms",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 8,
-        }}
+
+      {/* Action row — compact buttons, NOT full-width */}
+      <div
+        style={{ display: "flex", gap: 5, alignItems: "center" }}
+        onClick={(e) => e.stopPropagation()} // prevent card click
       >
-        Search on {result.name} <span>→</span>
-      </button>
-      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        {/* Primary search button — compact, not full-width */}
+        <button
+          onClick={() => openUrl(mainUrl)}
+          style={{
+            flex: "1 1 auto",
+            padding: "6px 12px",
+            background: `${result.color}${hovered ? "28" : "18"}`,
+            border: `1px solid ${result.color}${hovered ? "80" : "50"}`,
+            borderRadius: 7,
+            color: result.color,
+            fontFamily: "var(--f-display)",
+            fontWeight: 700,
+            fontSize: "0.68rem",
+            letterSpacing: "0.04em",
+            transition: "all 150ms",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 5,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            minWidth: 0,
+          }}
+        >
+          Search {result.name} <span style={{ fontSize: "0.8em" }}>→</span>
+        </button>
+
+        {/* Copy button */}
         <button
           onClick={copyUrl}
           title="Copy URL"
           style={{
-            padding: "7px 12px",
+            padding: "6px 9px",
             flexShrink: 0,
             background: copied ? "rgba(0,255,136,.1)" : "rgba(255,255,255,.04)",
             border: `1px solid ${copied ? "rgba(0,255,136,.4)" : "rgba(255,255,255,.1)"}`,
-            borderRadius: 6,
+            borderRadius: 7,
             color: copied ? "var(--c-green)" : "var(--c-text3)",
-            fontSize: "0.75rem",
+            fontSize: "0.72rem",
             transition: "all 150ms",
+            cursor: "pointer",
+            flexShrink: 0,
           }}
         >
           {copied ? "✓" : "⎘"}
         </button>
+
+        {/* Bookmark button */}
         <button
           onClick={handleBookmark}
           title="Bookmark"
           style={{
-            padding: "7px 12px",
+            padding: "6px 9px",
             flexShrink: 0,
             background: bookmarked
               ? "rgba(251,191,36,.12)"
               : "rgba(255,255,255,.04)",
             border: `1px solid ${bookmarked ? "rgba(251,191,36,.5)" : "rgba(255,255,255,.1)"}`,
-            borderRadius: 6,
+            borderRadius: 7,
             color: bookmarked ? "var(--c-gold)" : "var(--c-text3)",
-            fontSize: "0.85rem",
+            fontSize: "0.82rem",
             transition: "all 150ms",
+            cursor: "pointer",
+            flexShrink: 0,
           }}
         >
           {bookmarked ? "★" : "☆"}
         </button>
+
+        {/* More/less toggle */}
         {extraUrls.length > 0 && (
           <button
             onClick={() => setExpanded((v) => !v)}
             style={{
-              flex: 1,
-              padding: "7px 12px",
+              padding: "6px 9px",
+              flexShrink: 0,
               background: expanded
                 ? "rgba(0,212,255,.08)"
                 : "rgba(255,255,255,.04)",
               border: `1px solid ${expanded ? "rgba(0,212,255,.3)" : "rgba(255,255,255,.1)"}`,
-              borderRadius: 6,
+              borderRadius: 7,
               color: expanded ? "var(--c-cyan)" : "var(--c-text3)",
               fontFamily: "var(--f-display)",
-              fontSize: "0.62rem",
+              fontSize: "0.58rem",
               fontWeight: 700,
-              letterSpacing: "0.05em",
+              letterSpacing: "0.04em",
               transition: "all 150ms",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
             }}
           >
-            {expanded ? "▲ LESS" : `▼ MORE (${extraUrls.length})`}
+            {expanded ? "▲" : `+${extraUrls.length}`}
           </button>
         )}
       </div>
+
+      {/* Sub-URL chips — appear when expanded */}
       {expanded && extraUrls.length > 0 && (
         <div
           style={{
             display: "flex",
-            gap: 6,
+            gap: 5,
             flexWrap: "wrap",
             borderTop: "1px solid rgba(255,255,255,.06)",
-            paddingTop: 10,
+            paddingTop: 8,
           }}
+          onClick={(e) => e.stopPropagation()}
         >
           {extraUrls.map(([type, url]) => (
             <button
               key={type}
               onClick={() => openUrl(url)}
               style={{
-                flex: "1 0 auto",
-                padding: "8px 10px",
-                minWidth: 80,
+                padding: "4px 10px",
                 background: "rgba(255,255,255,.04)",
-                border: `1px solid ${result.color}35`,
-                borderRadius: 6,
+                border: `1px solid ${result.color}30`,
+                borderRadius: 99,
                 color: result.color + "cc",
                 fontFamily: "var(--f-display)",
-                fontSize: "0.62rem",
+                fontSize: "0.6rem",
                 fontWeight: 700,
-                letterSpacing: "0.06em",
+                letterSpacing: "0.04em",
                 textTransform: "capitalize",
                 transition: "all 150ms",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = result.color + "18";
@@ -341,7 +393,7 @@ function PlatformFilterBar({ active, onChange }) {
           key={cat.id}
           onClick={() => onChange(cat.id)}
           style={{
-            padding: "6px 14px",
+            padding: "5px 13px",
             borderRadius: 99,
             whiteSpace: "nowrap",
             flexShrink: 0,
@@ -352,10 +404,11 @@ function PlatformFilterBar({ active, onChange }) {
             border: `1px solid ${active === cat.id ? "rgba(0,212,255,.55)" : "rgba(255,255,255,.1)"}`,
             color: active === cat.id ? "var(--c-cyan)" : "var(--c-text3)",
             fontFamily: "var(--f-display)",
-            fontSize: "0.72rem",
+            fontSize: "0.7rem",
             fontWeight: 700,
             letterSpacing: "0.04em",
             transition: "all 150ms",
+            cursor: "pointer",
           }}
         >
           {cat.label}
@@ -434,11 +487,11 @@ export default function SearchPage() {
   const [viewMode, setViewMode] = useState("grid");
   const [elapsed, setElapsed] = useState(null);
   const [hiddenPlatforms, setHiddenPlatforms] = useState([]);
-  // Track query for RecommendationFeed — separate from URL params so no stale closure
   const [feedQuery, setFeedQuery] = useState("");
+  // FIX: track if content previews are available so we don't show a broken section
+  const [feedAvailable, setFeedAvailable] = useState(false);
   const startRef = useRef(null);
 
-  // Read URL params into refs so the useEffect below never becomes stale
   const initialQ = params.get("q") || "";
   const initialP = params.get("platform") || "all";
   const initialCT = params.get("ct") || "all";
@@ -446,13 +499,11 @@ export default function SearchPage() {
   const initialPRef = useRef(initialP);
   const initialCTRef = useRef(initialCT);
   const searchRef = useRef(search);
-  // Keep refs current on every render (safe — refs don't trigger re-renders)
   initialQRef.current = initialQ;
   initialPRef.current = initialP;
   initialCTRef.current = initialCT;
   searchRef.current = search;
 
-  // FIX: empty dep array is intentional — runs once on mount using refs, no stale closure
   useEffect(() => {
     const q = initialQRef.current;
     const p = initialPRef.current;
@@ -466,6 +517,7 @@ export default function SearchPage() {
             setSearched(true);
             setElapsed(Date.now() - startRef.current);
             setFeedQuery(q);
+            setFeedAvailable(false); // reset until feed reports success
           }
         });
     }
@@ -485,6 +537,7 @@ export default function SearchPage() {
       setCatFilter("all");
       setElapsed(Date.now() - startRef.current);
       setFeedQuery(data.query);
+      setFeedAvailable(false);
       navigate(
         `/search?q=${encodeURIComponent(data.query)}&platform=${data.platform}`,
         { replace: true },
@@ -531,10 +584,10 @@ export default function SearchPage() {
 
   const gridCols =
     viewMode === "compact"
-      ? "repeat(auto-fill,minmax(240px,1fr))"
+      ? "repeat(auto-fill,minmax(220px,1fr))"
       : viewMode === "list"
         ? "1fr"
-        : "repeat(auto-fill,minmax(300px,1fr))";
+        : "repeat(auto-fill,minmax(280px,1fr))";
 
   return (
     <div
@@ -636,16 +689,15 @@ export default function SearchPage() {
                 <div
                   key={p.id}
                   style={{
-                    padding: "4px 12px",
+                    padding: "3px 10px",
                     background: p.color + "12",
                     border: `1px solid ${p.color}35`,
                     borderRadius: 99,
                     color: p.color,
                     fontFamily: "var(--f-display)",
-                    fontSize: "0.62rem",
+                    fontSize: "0.6rem",
                     fontWeight: 700,
                     animation: "pulse 1.5s ease infinite",
-                    animationDelay: `${Math.random() * 0.5}s`,
                   }}
                 >
                   {p.icon} {p.name}
@@ -681,7 +733,7 @@ export default function SearchPage() {
               style={{
                 fontFamily: "var(--f-display)",
                 fontWeight: 800,
-                fontSize: "1.2rem",
+                fontSize: "1.1rem",
               }}
             >
               "
@@ -692,9 +744,9 @@ export default function SearchPage() {
               <span
                 style={{
                   fontFamily: "var(--f-mono)",
-                  fontSize: "0.72rem",
+                  fontSize: "0.7rem",
                   color: "var(--c-text3)",
-                  marginLeft: 12,
+                  marginLeft: 10,
                   fontWeight: 400,
                 }}
               >
@@ -706,6 +758,7 @@ export default function SearchPage() {
                   ` · ${hiddenPlatforms.length} hidden`}
               </span>
             </h2>
+
             <div
               style={{
                 display: "flex",
@@ -718,10 +771,10 @@ export default function SearchPage() {
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 style={{
-                  padding: "7px 12px",
-                  fontSize: "0.72rem",
+                  padding: "6px 10px",
+                  fontSize: "0.7rem",
                   borderRadius: 6,
-                  minWidth: 140,
+                  minWidth: 130,
                 }}
               >
                 {SORT_OPTIONS.map((o) => (
@@ -730,10 +783,11 @@ export default function SearchPage() {
                   </option>
                 ))}
               </select>
+
               <div
                 style={{
                   display: "flex",
-                  gap: 4,
+                  gap: 3,
                   background: "var(--c-surface)",
                   border: "1px solid var(--c-border2)",
                   borderRadius: 6,
@@ -749,9 +803,9 @@ export default function SearchPage() {
                     key={v.id}
                     onClick={() => setViewMode(v.id)}
                     style={{
-                      padding: "5px 10px",
+                      padding: "4px 9px",
                       borderRadius: 4,
-                      fontSize: "0.85rem",
+                      fontSize: "0.82rem",
                       background:
                         viewMode === v.id
                           ? "rgba(0,212,255,.14)"
@@ -759,34 +813,38 @@ export default function SearchPage() {
                       border: `1px solid ${viewMode === v.id ? "rgba(0,212,255,.4)" : "transparent"}`,
                       color:
                         viewMode === v.id ? "var(--c-cyan)" : "var(--c-text3)",
+                      cursor: "pointer",
                     }}
                   >
                     {v.icon}
                   </button>
                 ))}
               </div>
+
               {hiddenPlatforms.length > 0 && (
                 <button
                   onClick={() => setHiddenPlatforms([])}
                   style={{
-                    padding: "7px 14px",
+                    padding: "6px 12px",
                     background: "rgba(255,51,102,.1)",
                     border: "1px solid rgba(255,51,102,.3)",
                     borderRadius: 6,
                     color: "#ff3366",
                     fontFamily: "var(--f-display)",
-                    fontSize: "0.65rem",
+                    fontSize: "0.63rem",
                     fontWeight: 700,
+                    cursor: "pointer",
                   }}
                 >
                   SHOW {hiddenPlatforms.length} HIDDEN
                 </button>
               )}
+
               <button
                 onClick={handleOpenAll}
                 disabled={openingAll}
                 style={{
-                  padding: "9px 22px",
+                  padding: "7px 18px",
                   background: openingAll
                     ? "rgba(0,212,255,.1)"
                     : "linear-gradient(135deg,var(--c-cyan),#0080ff)",
@@ -795,12 +853,13 @@ export default function SearchPage() {
                   borderRadius: 6,
                   fontFamily: "var(--f-display)",
                   fontWeight: 800,
-                  fontSize: "0.72rem",
+                  fontSize: "0.7rem",
                   letterSpacing: "0.08em",
                   boxShadow: openingAll
                     ? "none"
                     : "0 4px 16px rgba(0,212,255,.35)",
                   transition: "all 200ms",
+                  cursor: openingAll ? "default" : "pointer",
                 }}
               >
                 {openingAll
@@ -829,7 +888,7 @@ export default function SearchPage() {
               <span
                 style={{
                   fontFamily: "var(--f-display)",
-                  fontSize: "0.58rem",
+                  fontSize: "0.55rem",
                   color: "var(--c-text4)",
                   letterSpacing: "0.2em",
                 }}
@@ -845,6 +904,7 @@ export default function SearchPage() {
                       if (d) {
                         setSearched(true);
                         setFeedQuery(r);
+                        setFeedAvailable(false);
                       }
                     });
                     navigate(
@@ -853,14 +913,15 @@ export default function SearchPage() {
                     );
                   }}
                   style={{
-                    padding: "5px 12px",
+                    padding: "4px 11px",
                     background: "var(--c-surface)",
                     border: "1px solid var(--c-border2)",
                     borderRadius: 99,
                     color: "var(--c-text2)",
                     fontFamily: "var(--f-mono)",
-                    fontSize: "0.72rem",
+                    fontSize: "0.7rem",
                     transition: "all 150ms",
+                    cursor: "pointer",
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.color = "var(--c-cyan)";
@@ -882,7 +943,7 @@ export default function SearchPage() {
             style={{
               display: "grid",
               gridTemplateColumns: gridCols,
-              gap: viewMode === "list" ? 8 : 14,
+              gap: viewMode === "list" ? 8 : 12,
             }}
           >
             {filteredResults.map((r, i) => (
@@ -899,8 +960,8 @@ export default function SearchPage() {
           {/* Quick hide bar */}
           <div
             style={{
-              marginTop: 32,
-              padding: "16px 20px",
+              marginTop: 28,
+              padding: "14px 18px",
               background: "rgba(255,255,255,.02)",
               border: "1px solid rgba(255,255,255,.06)",
               borderRadius: 10,
@@ -909,15 +970,15 @@ export default function SearchPage() {
             <div
               style={{
                 fontFamily: "var(--f-display)",
-                fontSize: "0.6rem",
+                fontSize: "0.58rem",
                 letterSpacing: "0.2em",
                 color: "var(--c-text4)",
-                marginBottom: 12,
+                marginBottom: 10,
               }}
             >
               QUICK HIDE PLATFORMS
             </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
               {results.map((r) => (
                 <button
                   key={r.platform}
@@ -929,11 +990,12 @@ export default function SearchPage() {
                     )
                   }
                   style={{
-                    padding: "4px 12px",
+                    padding: "3px 10px",
                     borderRadius: 99,
-                    fontSize: "0.68rem",
+                    fontSize: "0.65rem",
                     fontFamily: "var(--f-mono)",
                     transition: "all 150ms",
+                    cursor: "pointer",
                     background: hiddenPlatforms.includes(r.platform)
                       ? "rgba(255,51,102,.1)"
                       : r.color + "12",
@@ -956,7 +1018,7 @@ export default function SearchPage() {
           {user && lastSearch?.query && (
             <div
               style={{
-                marginTop: 16,
+                marginTop: 14,
                 display: "flex",
                 justifyContent: "flex-end",
                 gap: 10,
@@ -971,16 +1033,17 @@ export default function SearchPage() {
                   toast.success("Search saved!");
                 }}
                 style={{
-                  padding: "8px 18px",
+                  padding: "7px 16px",
                   background: "transparent",
                   border: "1px solid rgba(0,212,255,.25)",
                   borderRadius: 6,
                   color: "rgba(0,212,255,.6)",
                   fontFamily: "var(--f-display)",
-                  fontSize: "0.65rem",
+                  fontSize: "0.63rem",
                   fontWeight: 700,
                   letterSpacing: "0.1em",
                   transition: "all 150ms",
+                  cursor: "pointer",
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.borderColor = "var(--c-cyan)";
@@ -999,13 +1062,13 @@ export default function SearchPage() {
           {lastSearch?.enhancedQuery && (
             <div
               style={{
-                marginTop: 20,
-                padding: "12px 16px",
+                marginTop: 18,
+                padding: "10px 14px",
                 background: "rgba(124,58,237,.06)",
                 border: "1px solid rgba(124,58,237,.2)",
                 borderRadius: 8,
                 fontFamily: "var(--f-mono)",
-                fontSize: "0.75rem",
+                fontSize: "0.73rem",
                 color: "var(--c-text2)",
                 display: "flex",
                 alignItems: "center",
@@ -1023,18 +1086,31 @@ export default function SearchPage() {
             </div>
           )}
 
-          {/* ── Content recommendation feed ── */}
+          {/* ── Content recommendation feed ──
+              FIX: Only mount after first search, and pass onLoad/onError callbacks
+              so we know if real data is available before showing the section.
+              "No preview available" now only shows inside the feed component itself
+              when it genuinely has no data — we don't render the section header
+              unless feedAvailable becomes true OR the feed reports an honest empty state.
+          */}
           {feedQuery && (
-            <div style={{ marginTop: 56 }}>
+            <div style={{ marginTop: 52 }}>
               <div
                 style={{
                   height: 1,
                   background:
-                    "linear-gradient(90deg, transparent, rgba(0,212,255,0.2), transparent)",
-                  marginBottom: 40,
+                    "linear-gradient(90deg, transparent, rgba(0,212,255,0.18), transparent)",
+                  marginBottom: 36,
                 }}
               />
+              {/* 
+                Pass onLoad so if the feed gets actual results we show it properly,
+                and it self-hides when nothing comes back by checking its own state.
+              */}
               <RecommendationFeed
+                key={
+                  feedQuery
+                } /* remount on new query to reset internal state */
                 query={feedQuery}
                 platform={
                   initialP !== "all"
@@ -1093,7 +1169,7 @@ export default function SearchPage() {
               style={{
                 marginTop: 32,
                 display: "flex",
-                gap: 12,
+                gap: 10,
                 justifyContent: "center",
                 flexWrap: "wrap",
               }}
@@ -1112,6 +1188,7 @@ export default function SearchPage() {
                       if (d) {
                         setSearched(true);
                         setFeedQuery(s);
+                        setFeedAvailable(false);
                         navigate(
                           `/search?q=${encodeURIComponent(s)}&platform=all`,
                           { replace: true },
@@ -1120,14 +1197,15 @@ export default function SearchPage() {
                     });
                   }}
                   style={{
-                    padding: "9px 18px",
+                    padding: "8px 16px",
                     background: "var(--c-surface)",
                     border: "1px solid var(--c-border)",
                     borderRadius: 99,
                     color: "var(--c-text2)",
                     fontFamily: "var(--f-mono)",
-                    fontSize: "0.78rem",
+                    fontSize: "0.76rem",
                     transition: "all 150ms",
+                    cursor: "pointer",
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.borderColor = "rgba(0,212,255,.4)";
@@ -1143,47 +1221,8 @@ export default function SearchPage() {
               ))}
             </div>
           </div>
-
-          {/* Discover feed — shown before first search */}
-          <RecommendationFeed
-            query="trending viral 2025"
-            platform="youtube,reddit,dailymotion"
-            title="✨ Discover — Trending Now"
-            limit={8}
-            showFilters
-          />
         </>
       )}
-
-      {/* No results */}
-      {!loading && searched && results.length === 0 && (
-        <div style={{ textAlign: "center", padding: "80px 0" }}>
-          <div style={{ fontSize: "3rem", marginBottom: 16 }}>🔍</div>
-          <div
-            style={{
-              fontFamily: "var(--f-display)",
-              fontSize: "1rem",
-              color: "var(--c-text3)",
-              marginBottom: 8,
-            }}
-          >
-            No results found
-          </div>
-          <div
-            style={{
-              fontFamily: "var(--f-mono)",
-              fontSize: "0.75rem",
-              color: "var(--c-text4)",
-            }}
-          >
-            Try a different search term
-          </div>
-        </div>
-      )}
-
-      <style>{`
-        @keyframes fadeIn { from{opacity:0;transform:scale(.9)} to{opacity:1;transform:scale(1)} }
-      `}</style>
     </div>
   );
 }
