@@ -1,0 +1,47 @@
+export const PLATFORMS = [
+  { id: 'all', name: 'All Platforms', icon: '⬡', color: '#00f5ff' },
+  { id: 'youtube', name: 'YouTube', icon: '▶', color: '#FF0000', desc: 'Videos · Shorts · Live', category: 'video' },
+  { id: 'facebook', name: 'Facebook', icon: 'f', color: '#1877F2', desc: 'Videos · Reels · Stories', category: 'social' },
+  { id: 'instagram', name: 'Instagram', icon: '◎', color: '#E1306C', desc: 'Reels · Posts · Stories', category: 'social' },
+  { id: 'tiktok', name: 'TikTok', icon: '♪', color: '#69C9D0', desc: 'Short Videos · Trends', category: 'short' },
+  { id: 'dailymotion', name: 'Dailymotion', icon: '◉', color: '#0066DC', desc: 'Videos · Live · Playlists', category: 'video' },
+  { id: 'twitter', name: 'X / Twitter', icon: '✕', color: '#e0e0e0', desc: 'Video Tweets · Clips', category: 'social' },
+  { id: 'twitch', name: 'Twitch', icon: '◈', color: '#9146FF', desc: 'Live Streams · Clips', category: 'live' },
+  { id: 'reddit', name: 'Reddit', icon: '◍', color: '#FF4500', desc: 'Video Posts · GIFs', category: 'community' },
+  { id: 'vimeo', name: 'Vimeo', icon: '◐', color: '#1AB7EA', desc: 'HD Videos · Portfolios', category: 'video' },
+  { id: 'snapchat', name: 'Snapchat', icon: '◌', color: '#FFFC00', desc: 'Snaps · Stories · Spotlight', category: 'social' },
+  { id: 'pinterest', name: 'Pinterest', icon: '⊕', color: '#E60023', desc: 'Video Pins · Idea Pins', category: 'visual' },
+  { id: 'linkedin', name: 'LinkedIn', icon: 'in', color: '#0A66C2', desc: 'Video Posts · Stories', category: 'professional' },
+  { id: 'rumble', name: 'Rumble', icon: 'R', color: '#85C742', desc: 'Videos · Live · Channels', category: 'video' },
+  { id: 'odysee', name: 'Odysee', icon: '∞', color: '#EF1970', desc: 'Decentralized Videos', category: 'decentralized' },
+];
+
+export const CATEGORIES = [
+  { label: '🔥 Trending', tag: 'trending' },
+  { label: '🎵 Music', tag: 'music' },
+  { label: '🎮 Gaming', tag: 'gaming' },
+  { label: '📱 Shorts', tag: 'shorts' },
+  { label: '🎬 Movies', tag: 'movies' },
+  { label: '🏆 Sports', tag: 'sports' },
+  { label: '🍕 Food', tag: 'food' },
+  { label: '✈️ Travel', tag: 'travel' },
+  { label: '💡 Tech', tag: 'technology' },
+  { label: '😂 Comedy', tag: 'comedy' },
+  { label: '💪 Fitness', tag: 'fitness' },
+  { label: '🎨 Art', tag: 'art' },
+  { label: '🔬 Science', tag: 'science' },
+  { label: '📰 News', tag: 'news' },
+  { label: '🐾 Animals', tag: 'animals' },
+  { label: '🚗 Cars', tag: 'cars' },
+];
+
+export const PLATFORM_CATEGORIES = [
+  { id: 'all', label: 'All' },
+  { id: 'video', label: 'Video' },
+  { id: 'social', label: 'Social' },
+  { id: 'short', label: 'Shorts' },
+  { id: 'live', label: 'Live' },
+  { id: 'community', label: 'Community' },
+  { id: 'visual', label: 'Visual' },
+  { id: 'professional', label: 'Professional' },
+];
