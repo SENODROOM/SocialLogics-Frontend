@@ -1,59 +1,90 @@
-import axios from 'axios';
+import axios from "axios";
 
-const api = axios.create({ baseURL: '/api' });
+const http = axios.create({ baseURL: "/api", timeout: 15000 });
 
-api.interceptors.request.use(cfg => {
-  const token = localStorage.getItem('sl_token');
-  if (token) cfg.headers.Authorization = `Bearer ${token}`;
+http.interceptors.request.use((cfg) => {
+  const t = localStorage.getItem("sl_token");
+  if (t) cfg.headers.Authorization = `Bearer ${t}`;
   return cfg;
 });
-
-api.interceptors.response.use(
-  res => res,
-  err => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('sl_token');
-      window.location.href = '/login';
+http.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (
+      err.response?.status === 401 &&
+      !window.location.pathname.includes("/login")
+    ) {
+      localStorage.removeItem("sl_token");
+      window.location.href = "/login";
     }
-    return Promise.reject(err);
-  }
+    return Promise.reject(
+      new Error(err.response?.data?.error || err.message || "Request failed"),
+    );
+  },
 );
 
-export const searchAPI = {
-  search: (query, platform) => api.post('/search', { query, platform }),
-  platforms: () => api.get('/search/platforms'),
-  suggestions: (q) => api.get(`/search/suggestions?q=${q}`),
+export const authAPI = {
+  register: (u, e, p) =>
+    http.post("/auth/register", { username: u, email: e, password: p }),
+  login: (e, p) => http.post("/auth/login", { email: e, password: p }),
+  me: () => http.get("/auth/me"),
+  updateProfile: (d) => http.put("/auth/profile", d),
+  changePassword: (d) => http.put("/auth/change-password", d),
 };
 
-export const authAPI = {
-  login: (email, password) => api.post('/auth/login', { email, password }),
-  register: (username, email, password) => api.post('/auth/register', { username, email, password }),
-  me: () => api.get('/auth/me'),
-  updateProfile: (data) => api.put('/auth/profile', data),
-  changePassword: (data) => api.put('/auth/change-password', data),
+export const searchAPI = {
+  search: (params) => http.post("/search", params),
+  platforms: (cat) =>
+    http.get("/search/platforms", { params: { category: cat } }),
+  suggestions: (q, signal) =>
+    http.get("/search/suggestions", { params: { q, limit: 10 }, signal }),
+  trending: (limit = 20, period = "all") =>
+    http.get("/search/trending", { params: { limit, period } }),
+  stats: () => http.get("/search/stats"),
+  recordClick: (d) => http.post("/search/click", d).catch(() => {}),
+};
+
+export const recommendationsAPI = {
+  // Fetch content recommendations for a query
+  get: (q, platform = "all", limit = 8) =>
+    http.get("/recommendations", { params: { q, platform, limit } }),
+
+  // Fetch trending/homepage recommendations (uses popular query)
+  trending: (limit = 8) =>
+    http.get("/recommendations", {
+      params: {
+        q: "trending viral 2025",
+        platform: "youtube,reddit,dailymotion",
+        limit,
+      },
+    }),
 };
 
 export const historyAPI = {
-  get: (page = 1) => api.get(`/history?page=${page}`),
-  delete: (id) => api.delete(`/history/${id}`),
-  clear: () => api.delete('/history'),
+  get: (page = 1, filters = {}) =>
+    http.get("/history", { params: { page, ...filters } }),
+  delete: (id) => http.delete(`/history/${id}`),
+  clear: () => http.delete("/history"),
 };
 
 export const bookmarksAPI = {
-  get: (collection, page = 1) => api.get(`/bookmarks?page=${page}${collection ? `&collection=${collection}` : ''}`),
-  create: (data) => api.post('/bookmarks', data),
-  update: (id, data) => api.put(`/bookmarks/${id}`, data),
-  delete: (id) => api.delete(`/bookmarks/${id}`),
-};
-
-export const trendingAPI = {
-  get: (limit = 20) => api.get(`/trending?limit=${limit}`),
+  get: (params = {}) => http.get("/bookmarks", { params }),
+  create: (d) => http.post("/bookmarks", d),
+  update: (id, d) => http.put(`/bookmarks/${id}`, d),
+  delete: (id) => http.delete(`/bookmarks/${id}`),
+  toggleFavorite: (id) => http.post(`/bookmarks/${id}/toggle-favorite`),
 };
 
 export const usersAPI = {
-  stats: () => api.get('/users/stats'),
-  saveSearch: (query, platform) => api.post('/users/saved-searches', { query, platform }),
-  deleteSavedSearch: (index) => api.delete(`/users/saved-searches/${index}`),
+  stats: () => http.get("/users/stats"),
+  saveSearch: (d) => http.post("/users/saved-searches", d),
+  deleteSaved: (i) => http.delete(`/users/saved-searches/${i}`),
 };
 
-export default api;
+export const alertsAPI = {
+  get: () => http.get("/alerts"),
+  create: (d) => http.post("/alerts", d),
+  delete: (id) => http.delete(`/alerts/${id}`),
+};
+
+export default http;

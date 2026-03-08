@@ -1,60 +1,90 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
+import { useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import Navbar from './components/Navbar';
-import ParticleField from './components/ParticleField';
+import Navbar from './components/layout/Navbar';
+import KeyboardShortcuts from './components/layout/KeyboardShortcuts';
+import { GlobalBackground } from './components/layout/Background';
 import Home from './pages/Home';
-import Search from './pages/Search';
+import SearchPage from './pages/Search';
 import History from './pages/History';
-import Bookmarks from './pages/Bookmarks';
+import { Bookmarks } from './pages/Bookmarks';
+import Dashboard from './pages/Dashboard';
 import Profile from './pages/Profile';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import Dashboard from './pages/Dashboard';
 import './index.css';
 
-const PrivateRoute = ({ children }) => {
+function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', color:'var(--cyan)', fontFamily:'var(--font-display)', fontSize:'0.8rem', letterSpacing:'0.3em' }}>LOADING...</div>;
+  if (loading) return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', flexDirection:'column', gap:14 }}>
+      <div style={{ width:40, height:40, borderRadius:'50%', border:'2px solid rgba(0,212,255,.1)', borderTop:'2px solid var(--c-cyan)', animation:'spin .7s linear infinite' }}/>
+      <span style={{ fontFamily:'var(--f-mono)', fontSize:'0.72rem', color:'var(--c-text4)', letterSpacing:'0.2em' }}>LOADING...</span>
+    </div>
+  );
   return user ? children : <Navigate to="/login" replace />;
-};
+}
 
-const AppRoutes = () => (
-  <>
-    <Navbar />
-    <Routes>
-      <Route path="/" element={<Home />} />
-      <Route path="/search" element={<Search />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
-      <Route path="/history" element={<PrivateRoute><History /></PrivateRoute>} />
-      <Route path="/bookmarks" element={<PrivateRoute><Bookmarks /></PrivateRoute>} />
-      <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
-      <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  </>
-);
+function GlobalShortcuts() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    let gPressed = false;
+    const handler = (e) => {
+      if (['INPUT','TEXTAREA'].includes(e.target.tagName)) return;
+      if (e.key === 'g') { gPressed = true; setTimeout(() => { gPressed = false; }, 1000); return; }
+      if (gPressed) {
+        if (e.key === 'h') navigate('/');
+        if (e.key === 's') navigate('/search');
+        if (e.key === 'b') navigate('/bookmarks');
+        if (e.key === 'd') navigate('/dashboard');
+        gPressed = false;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [navigate]);
+  return null;
+}
+
+function AppLayout() {
+  return (
+    <>
+      <GlobalShortcuts />
+      <Navbar />
+      <main>
+        <Routes>
+          <Route path="/"          element={<Home />} />
+          <Route path="/search"    element={<SearchPage />} />
+          <Route path="/login"     element={<Login />} />
+          <Route path="/register"  element={<Register />} />
+          <Route path="/history"   element={<PrivateRoute><History /></PrivateRoute>} />
+          <Route path="/bookmarks" element={<PrivateRoute><Bookmarks /></PrivateRoute>} />
+          <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+          <Route path="/profile"   element={<PrivateRoute><Profile /></PrivateRoute>} />
+          <Route path="*"          element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
+      <KeyboardShortcuts />
+    </>
+  );
+}
 
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <div style={{ minHeight: '100vh', position: 'relative', background: 'var(--bg)' }}>
-          {/* Scanline */}
-          <div style={{ position:'fixed', top:0, left:0, right:0, width:'100%', height:'2px', background:'linear-gradient(transparent,rgba(0,245,255,0.06),transparent)', animation:'scanline 10s linear infinite', pointerEvents:'none', zIndex:9999 }} />
-          {/* Grid */}
-          <div style={{ position:'fixed', inset:0, backgroundImage:'linear-gradient(rgba(0,245,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,245,255,0.025) 1px,transparent 1px)', backgroundSize:'60px 60px', pointerEvents:'none', zIndex:0 }} />
-          {/* Radial glow */}
-          <div style={{ position:'fixed', inset:0, background:'radial-gradient(ellipse at 15% 15%,rgba(0,80,120,0.12) 0%,transparent 60%)', pointerEvents:'none', zIndex:0 }} />
-          <ParticleField />
+        <div style={{ minHeight:'100vh', position:'relative' }}>
+          <GlobalBackground />
           <div style={{ position:'relative', zIndex:1 }}>
-            <AppRoutes />
+            <AppLayout />
           </div>
           <Toaster position="bottom-right" toastOptions={{
-            style: { background:'#0a1220', color:'#e0e8f0', border:'1px solid rgba(0,245,255,0.3)', fontFamily:'Share Tech Mono, monospace', fontSize:'0.8rem' },
-            success: { iconTheme: { primary:'#00f5ff', secondary:'#020408' } },
-          }} />
+            duration: 3000,
+            style: { background:'rgba(9,20,34,.95)', color:'var(--c-text)', border:'1px solid rgba(0,212,255,.25)', fontFamily:'JetBrains Mono, monospace', fontSize:'0.78rem', backdropFilter:'blur(20px)', boxShadow:'0 8px 32px rgba(0,0,0,.5)' },
+            success: { iconTheme:{ primary:'var(--c-cyan)', secondary:'#000' } },
+            error:   { iconTheme:{ primary:'#ff3366', secondary:'#000' } },
+          }}/>
         </div>
       </BrowserRouter>
     </AuthProvider>

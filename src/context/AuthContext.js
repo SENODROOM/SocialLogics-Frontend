@@ -1,60 +1,58 @@
-import { createContext, useContext, useState, useEffect } from 'react';
-import axios from 'axios';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { authAPI } from '../utils/api';
 
 const AuthContext = createContext(null);
 
-export const AuthProvider = ({ children }) => {
+export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('sl_token'));
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const token = localStorage.getItem('sl_token');
     if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      axios.get('/api/auth/me')
-        .then(res => setUser(res.data.user))
-        .catch(() => logout())
+      authAPI.me()
+        .then(r => setUser(r.data.data.user))
+        .catch(() => localStorage.removeItem('sl_token'))
         .finally(() => setLoading(false));
     } else {
       setLoading(false);
     }
   }, []);
 
-  const login = async (email, password) => {
-    const res = await axios.post('/api/auth/login', { email, password });
-    const { token: t, user: u } = res.data;
-    localStorage.setItem('sl_token', t);
-    axios.defaults.headers.common['Authorization'] = `Bearer ${t}`;
-    setToken(t); setUser(u);
+  const login = useCallback(async (email, password) => {
+    const r = await authAPI.login(email, password);
+    const { token, user: u } = r.data.data;
+    localStorage.setItem('sl_token', token);
+    setUser(u);
     return u;
-  };
+  }, []);
 
-  const register = async (username, email, password) => {
-    const res = await axios.post('/api/auth/register', { username, email, password });
-    const { token: t, user: u } = res.data;
-    localStorage.setItem('sl_token', t);
-    axios.defaults.headers.common['Authorization'] = `Bearer ${t}`;
-    setToken(t); setUser(u);
+  const register = useCallback(async (username, email, password) => {
+    const r = await authAPI.register(username, email, password);
+    const { token, user: u } = r.data.data;
+    localStorage.setItem('sl_token', token);
+    setUser(u);
     return u;
-  };
+  }, []);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     localStorage.removeItem('sl_token');
-    delete axios.defaults.headers.common['Authorization'];
-    setToken(null); setUser(null);
-  };
+    setUser(null);
+  }, []);
 
-  const updateUser = (updates) => setUser(prev => ({ ...prev, ...updates }));
+  const updateUser = useCallback((updates) => {
+    setUser(prev => prev ? { ...prev, ...updates } : prev);
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );
-};
+}
 
 export const useAuth = () => {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be inside AuthProvider');
+  if (!ctx) throw new Error('useAuth outside AuthProvider');
   return ctx;
 };

@@ -1,159 +1,795 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import SearchBar from '../components/SearchBar';
-import { trendingAPI } from '../utils/api';
-import { PLATFORMS, CATEGORIES } from '../utils/constants';
-import { searchAPI } from '../utils/api';
-import toast from 'react-hot-toast';
+import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import SearchBar from "../components/search/SearchBar";
+import RecommendationFeed from "../components/features/RecommendationFeed";
+import { searchAPI, bookmarksAPI } from "../utils/api";
+import { CATEGORIES, PLATFORMS } from "../utils/constants";
+import { useSearch } from "../hooks/useSearch";
+import { useAuth } from "../context/AuthContext";
+import toast from "react-hot-toast";
+
+const TYPING_QUERIES = [
+  "viral shorts 2025",
+  "AI breakthroughs",
+  "best gaming clips",
+  "trending music videos",
+  "travel vlog japan",
+  "tech reviews today",
+  "comedy compilation",
+  "sports highlights",
+  "cooking tutorials",
+  "documentary films",
+  "live concerts",
+  "science explained",
+];
+
+// Default "discover" query shown on homepage before user searches
+const HOME_DISCOVER_QUERY = "trending viral 2025";
+
+function TypingEffect({ queries }) {
+  const [text, setText] = useState("");
+  const [qIdx, setQIdx] = useState(0);
+  const [charIdx, setCharIdx] = useState(0);
+  const [deleting, setDeleting] = useState(false);
+  const timer = useRef(null);
+  useEffect(() => {
+    const current = queries[qIdx];
+    timer.current = setTimeout(
+      () => {
+        if (!deleting) {
+          if (charIdx < current.length) {
+            setText(current.substring(0, charIdx + 1));
+            setCharIdx((i) => i + 1);
+          } else setTimeout(() => setDeleting(true), 2000);
+        } else {
+          if (charIdx > 0) {
+            setText(current.substring(0, charIdx - 1));
+            setCharIdx((i) => i - 1);
+          } else {
+            setDeleting(false);
+            setQIdx((i) => (i + 1) % queries.length);
+          }
+        }
+      },
+      deleting ? 35 : 70,
+    );
+    return () => clearTimeout(timer.current);
+  }, [text, charIdx, deleting, qIdx, queries]);
+  return (
+    <span
+      style={{
+        color: "var(--c-cyan)",
+        fontFamily: "var(--f-mono)",
+        borderRight: "2px solid var(--c-cyan)",
+        paddingRight: 2,
+      }}
+    >
+      {text || "\u00A0"}
+    </span>
+  );
+}
+
+function AnimatedCounter({ target, suffix = "" }) {
+  const [count, setCount] = useState(0);
+  const ref = useRef(false);
+  useEffect(() => {
+    if (ref.current) return;
+    ref.current = true;
+    const duration = 1500,
+      step = Math.ceil(target / (duration / 16));
+    const timer = setInterval(() => {
+      setCount((c) => {
+        const next = Math.min(c + step, target);
+        if (next >= target) clearInterval(timer);
+        return next;
+      });
+    }, 16);
+    return () => clearInterval(timer);
+  }, [target]);
+  return (
+    <span>
+      {count.toLocaleString()}
+      {suffix}
+    </span>
+  );
+}
+
+const totalUsersBillions = PLATFORMS.filter((p) => p.id !== "all").reduce(
+  (s, p) => {
+    const n = parseFloat(
+      (p.monthlyUsers || "0").replace("B", "").replace("M", ""),
+    );
+    const isB = (p.monthlyUsers || "").includes("B");
+    const isM = (p.monthlyUsers || "").includes("M");
+    return s + (isB ? n : isM ? n / 1000 : 0);
+  },
+  0,
+);
 
 export default function Home() {
   const [trending, setTrending] = useState([]);
-  const [activeCat, setActiveCat] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [activeCategory, setActiveCategory] = useState(null);
+  const [searchCount, setSearchCount] = useState(0);
+  // Track what the user just searched to feed into RecommendationFeed
+  const [feedQuery, setFeedQuery] = useState(HOME_DISCOVER_QUERY);
   const navigate = useNavigate();
+  const { search, openAll } = useSearch();
+  const { user } = useAuth();
 
   useEffect(() => {
-    trendingAPI.get(12).then(r => setTrending(r.data.trending)).catch(() => {});
+    searchAPI
+      .trending(20, "daily")
+      .then((r) => setTrending(r.data?.data?.trending || []))
+      .catch(() => {});
+    searchAPI
+      .stats()
+      .then((r) => {
+        setStats(r.data?.data);
+        setSearchCount(r.data?.data?.totalSearches || 0);
+      })
+      .catch(() => {});
   }, []);
 
-  const handleSearch = (data) => {
-    const { query, platform, results } = data;
-    results.forEach((r, i) => setTimeout(() => window.open(r.url, '_blank'), i * 120));
-    toast.success(`Opened ${results.length} platform${results.length > 1 ? 's' : ''}`);
-    navigate(`/search?q=${encodeURIComponent(query)}&platform=${platform}`);
+  const handleSearch = async (data) => {
+    openAll(data.results);
+    setFeedQuery(data.query);
+    navigate(
+      `/search?q=${encodeURIComponent(data.query)}&platform=${data.platform}`,
+    );
   };
 
   const handleCategory = async (tag) => {
-    setActiveCat(tag);
+    setActiveCategory(tag);
+    setFeedQuery(tag);
+    const data = await search({ query: tag, platform: "all" });
+    if (data) {
+      openAll(data.results.slice(0, 6));
+      navigate(`/search?q=${encodeURIComponent(tag)}&platform=all`);
+    }
+  };
+
+  const handleTrendingClick = async (query) => {
+    setFeedQuery(query);
+    const data = await search({ query, platform: "all" });
+    if (data) {
+      openAll(data.results.slice(0, 5));
+      navigate(`/search?q=${encodeURIComponent(query)}&platform=all`);
+    }
+  };
+
+  const handleBookmark = async (item) => {
+    if (!user) {
+      toast.error("Login to save bookmarks");
+      return;
+    }
     try {
-      const res = await searchAPI.search(tag, 'all');
-      res.data.results.slice(0, 5).forEach((r, i) => setTimeout(() => window.open(r.url, '_blank'), i * 120));
-      toast.success(`Searching "${tag}" on top platforms`);
-    } catch {}
+      await bookmarksAPI.create({
+        title: item.title,
+        url: item.url,
+        platform: item.platform,
+        thumbnail: item.thumbnail,
+        description: item.author ? `By ${item.author}` : "",
+      });
+      toast.success("Saved to bookmarks ★", { icon: "★" });
+    } catch {
+      toast.error("Failed to save");
+    }
   };
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px 80px' }}>
-
-      {/* Hero */}
-      <div style={{ textAlign: 'center', padding: '80px 0 60px' }} className="animate-fadeInUp">
-        {/* Logo */}
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ width: 56, height: 56, border: '2px solid #00f5ff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', color: '#00f5ff', boxShadow: '0 0 20px rgba(0,245,255,0.3)' }}>⬡</div>
-            <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: 'clamp(2rem,7vw,5rem)', letterSpacing: '0.08em', background: 'linear-gradient(135deg,#00f5ff 0%,#fff 40%,#00f5ff 60%,#0080ff 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              SocialLogics
-            </h1>
-          </div>
+    <div style={{ maxWidth: 1280, margin: "0 auto", padding: "0 24px 100px" }}>
+      {/* ── Hero ──────────────────────────────────────────────────────── */}
+      <section style={{ padding: "72px 0 60px", textAlign: "center" }}>
+        {/* Live status pill */}
+        <div
+          className="animate-fade-up"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 16px",
+            background: "rgba(0,212,255,.06)",
+            border: "1px solid rgba(0,212,255,.2)",
+            borderRadius: 99,
+            marginBottom: 36,
+          }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: "var(--c-green)",
+              boxShadow: "0 0 8px var(--c-green)",
+              display: "block",
+              animation: "pulse 2s ease infinite",
+            }}
+          />
+          <span
+            style={{
+              fontFamily: "var(--f-mono)",
+              fontSize: "0.68rem",
+              color: "var(--c-text2)",
+              letterSpacing: "0.1em",
+            }}
+          >
+            {stats
+              ? `${stats.totalSearches?.toLocaleString() || "—"} searches · ${stats.platforms || 18} platforms · live`
+              : "LIVE · 18+ PLATFORMS · REAL-TIME SEARCH"}
+          </span>
         </div>
 
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'rgba(0,245,255,0.5)', letterSpacing: '0.35em', marginBottom: 48, textTransform: 'uppercase' }}>
-          Unified Video Search Engine · 14 Platforms
-        </p>
+        {/* Logo */}
+        <div
+          className="animate-fade-up animate-delay-1"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 18,
+            marginBottom: 18,
+          }}
+        >
+          <div
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: "50%",
+              border: "2px solid var(--c-cyan)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--c-cyan)",
+              fontSize: "1.9rem",
+              boxShadow:
+                "0 0 30px rgba(0,212,255,.35),0 0 80px rgba(0,212,255,.1)",
+              animation: "glow-pulse 3s ease infinite",
+            }}
+          >
+            ⬡
+          </div>
+          <h1
+            style={{
+              fontFamily: "var(--f-display)",
+              fontWeight: 800,
+              fontSize: "clamp(2.6rem,8vw,5.5rem)",
+              letterSpacing: "-0.01em",
+              background:
+                "linear-gradient(135deg,var(--c-cyan) 0%,#fff 40%,#80c0ff 70%,#a855f7 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              lineHeight: 1,
+            }}
+          >
+            SocialLogics
+          </h1>
+        </div>
+
+        <div
+          className="animate-fade-up animate-delay-1"
+          style={{
+            fontFamily: "var(--f-mono)",
+            fontSize: "clamp(0.7rem,1.8vw,0.9rem)",
+            color: "var(--c-text3)",
+            letterSpacing: "0.3em",
+            marginBottom: 14,
+            textTransform: "uppercase",
+          }}
+        >
+          Unified Video Search Engine
+        </div>
+
+        <div
+          className="animate-fade-up animate-delay-2"
+          style={{
+            fontFamily: "var(--f-body)",
+            fontSize: "clamp(1rem,2.5vw,1.2rem)",
+            color: "var(--c-text2)",
+            marginBottom: 52,
+            lineHeight: 1.5,
+          }}
+        >
+          Discover <TypingEffect queries={TYPING_QUERIES} /> across every
+          platform
+        </div>
 
         {/* Search */}
-        <div style={{ maxWidth: 820, margin: '0 auto', position: 'relative' }}>
-          <div style={{ position: 'absolute', top: -8, left: -8, width: 16, height: 16, borderTop: '2px solid rgba(0,245,255,0.5)', borderLeft: '2px solid rgba(0,245,255,0.5)' }} />
-          <div style={{ position: 'absolute', top: -8, right: -8, width: 16, height: 16, borderTop: '2px solid rgba(0,245,255,0.5)', borderRight: '2px solid rgba(0,245,255,0.5)' }} />
-          <div style={{ position: 'absolute', bottom: -8, left: -8, width: 16, height: 16, borderBottom: '2px solid rgba(0,245,255,0.5)', borderLeft: '2px solid rgba(0,245,255,0.5)' }} />
-          <div style={{ position: 'absolute', bottom: -8, right: -8, width: 16, height: 16, borderBottom: '2px solid rgba(0,245,255,0.5)', borderRight: '2px solid rgba(0,245,255,0.5)' }} />
-          <SearchBar large onSearch={handleSearch} />
+        <div
+          className="animate-fade-up animate-delay-3"
+          style={{
+            maxWidth: 880,
+            margin: "0 auto",
+            position: "relative",
+            padding: "0 8px",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: -10,
+              left: -2,
+              width: 18,
+              height: 18,
+              borderTop: "2px solid rgba(0,212,255,.5)",
+              borderLeft: "2px solid rgba(0,212,255,.5)",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: -10,
+              right: -2,
+              width: 18,
+              height: 18,
+              borderTop: "2px solid rgba(0,212,255,.5)",
+              borderRight: "2px solid rgba(0,212,255,.5)",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              bottom: -10,
+              left: -2,
+              width: 18,
+              height: 18,
+              borderBottom: "2px solid rgba(0,212,255,.5)",
+              borderLeft: "2px solid rgba(0,212,255,.5)",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              bottom: -10,
+              right: -2,
+              width: 18,
+              height: 18,
+              borderBottom: "2px solid rgba(0,212,255,.5)",
+              borderRight: "2px solid rgba(0,212,255,.5)",
+            }}
+          />
+          <SearchBar large autoFocus onSearch={handleSearch} />
         </div>
 
-        {/* Stats badges */}
-        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginTop: 28, flexWrap: 'wrap' }}>
-          {['14 PLATFORMS', 'VIDEOS', 'REELS', 'SHORTS', 'LIVE STREAMS', 'POSTS'].map(t => (
-            <span key={t} style={{ fontFamily: 'var(--font-display)', fontSize: '0.58rem', padding: '4px 12px', border: '1px solid rgba(0,245,255,0.2)', borderRadius: 3, color: 'rgba(0,245,255,0.5)', letterSpacing: '0.15em' }}>{t}</span>
+        {/* Stats bar */}
+        <div
+          className="animate-fade-up animate-delay-4"
+          style={{
+            display: "flex",
+            gap: 32,
+            justifyContent: "center",
+            marginTop: 40,
+            flexWrap: "wrap",
+          }}
+        >
+          {[
+            {
+              label: "Platforms",
+              value: PLATFORMS.filter((p) => p.id !== "all").length,
+              suffix: "",
+            },
+            {
+              label: "Monthly Reach",
+              value: Math.round(totalUsersBillions * 10) / 10,
+              suffix: "B+",
+            },
+            {
+              label: "Searches Today",
+              value: Math.max(searchCount, 1247),
+              suffix: "",
+            },
+            { label: "Content Types", value: 8, suffix: "" },
+          ].map((s) => (
+            <div key={s.label} style={{ textAlign: "center" }}>
+              <div
+                style={{
+                  fontFamily: "var(--f-display)",
+                  fontWeight: 800,
+                  fontSize: "1.6rem",
+                  color: "var(--c-cyan)",
+                  lineHeight: 1,
+                }}
+              >
+                <AnimatedCounter target={s.value} suffix={s.suffix} />
+              </div>
+              <div
+                style={{
+                  fontFamily: "var(--f-mono)",
+                  fontSize: "0.62rem",
+                  color: "var(--c-text4)",
+                  letterSpacing: "0.15em",
+                  marginTop: 4,
+                }}
+              >
+                {s.label.toUpperCase()}
+              </div>
+            </div>
           ))}
         </div>
-      </div>
 
-      {/* Trending */}
-      {trending.length > 0 && (
-        <div style={{ marginBottom: 56 }} className="animate-fadeInUp-delay1">
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.65rem', letterSpacing: '0.3em', color: 'rgba(0,245,255,0.5)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
-            TRENDING NOW
-            <div style={{ flex: 1, height: 1, background: 'linear-gradient(90deg,rgba(0,245,255,0.3),transparent)' }} />
-          </div>
-          <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
-            <div style={{ display: 'flex', gap: 8, width: 'max-content' }}>
-              {trending.map((t, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleCategory(t.query)}
-                  style={{
-                    padding: '8px 16px', borderRadius: 3, whiteSpace: 'nowrap',
-                    background: 'rgba(0,245,255,0.04)', border: '1px solid rgba(0,245,255,0.15)',
-                    color: 'rgba(224,232,240,0.7)', fontFamily: 'var(--font-mono)', fontSize: '0.78rem',
-                    transition: 'all 0.2s',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background='rgba(0,245,255,0.1)'; e.currentTarget.style.borderColor='rgba(0,245,255,0.4)'; e.currentTarget.style.color='#00f5ff'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background='rgba(0,245,255,0.04)'; e.currentTarget.style.borderColor='rgba(0,245,255,0.15)'; e.currentTarget.style.color='rgba(224,232,240,0.7)'; }}
-                >
-                  🔥 {t.query}
-                </button>
-              ))}
-            </div>
+        {/* Platform marquee */}
+        <div
+          className="animate-fade-up animate-delay-4"
+          style={{ marginTop: 36, overflow: "hidden", position: "relative" }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 80,
+              background: "linear-gradient(90deg,var(--c-bg),transparent)",
+              zIndex: 2,
+              pointerEvents: "none",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: 80,
+              background: "linear-gradient(270deg,var(--c-bg),transparent)",
+              zIndex: 2,
+              pointerEvents: "none",
+            }}
+          />
+          <div
+            style={{
+              display: "flex",
+              animation: "ticker 35s linear infinite",
+              width: "max-content",
+              gap: 10,
+            }}
+          >
+            {[
+              ...PLATFORMS.filter((p) => p.id !== "all"),
+              ...PLATFORMS.filter((p) => p.id !== "all"),
+            ].map((p, i) => (
+              <span
+                key={i}
+                onClick={() => navigate(`/search?platform=${p.id}`)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "5px 16px",
+                  background: p.color + "10",
+                  border: `1px solid ${p.color}35`,
+                  borderRadius: 99,
+                  cursor: "pointer",
+                  flexShrink: 0,
+                  color: p.color,
+                  fontFamily: "var(--f-display)",
+                  fontSize: "0.72rem",
+                  fontWeight: 700,
+                  transition: "all var(--t-fast)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = p.color + "22";
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = p.color + "10";
+                  e.currentTarget.style.transform = "none";
+                }}
+              >
+                {p.icon} {p.name}
+              </span>
+            ))}
           </div>
         </div>
-      )}
+      </section>
 
-      {/* Categories */}
-      <div style={{ marginBottom: 56 }} className="animate-fadeInUp-delay2">
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.65rem', letterSpacing: '0.3em', color: 'rgba(0,245,255,0.5)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
-          BROWSE BY CATEGORY
-          <div style={{ flex: 1, height: 1, background: 'linear-gradient(90deg,rgba(0,245,255,0.3),transparent)' }} />
+      {/* ── Categories ─────────────────────────────────────────────────── */}
+      <section style={{ marginBottom: 40 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 18,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "var(--f-display)",
+              fontSize: "0.65rem",
+              letterSpacing: "0.3em",
+              color: "var(--c-text3)",
+              textTransform: "uppercase",
+            }}
+          >
+            Browse by category
+          </div>
+          <div
+            style={{
+              flex: 1,
+              height: 1,
+              background:
+                "linear-gradient(90deg,rgba(255,255,255,.08),transparent)",
+            }}
+          />
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {CATEGORIES.map(c => (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {CATEGORIES.map((c) => (
             <button
               key={c.tag}
               onClick={() => handleCategory(c.tag)}
               style={{
-                padding: '9px 18px', borderRadius: 3,
-                background: activeCat === c.tag ? 'rgba(0,245,255,0.12)' : 'rgba(255,255,255,0.03)',
-                border: `1px solid ${activeCat === c.tag ? 'rgba(0,245,255,0.5)' : 'rgba(255,255,255,0.08)'}`,
-                color: activeCat === c.tag ? '#00f5ff' : 'rgba(224,232,240,0.6)',
-                fontFamily: 'var(--font-body)', fontSize: '0.82rem',
-                transition: 'all 0.2s',
+                padding: "9px 18px",
+                borderRadius: "var(--r-md)",
+                background:
+                  activeCategory === c.tag
+                    ? "rgba(0,212,255,.1)"
+                    : "var(--c-surface)",
+                border: `1px solid ${activeCategory === c.tag ? "var(--c-cyan)" : "var(--c-border)"}`,
+                color:
+                  activeCategory === c.tag ? "var(--c-cyan)" : "var(--c-text2)",
+                fontFamily: "var(--f-body)",
+                fontSize: "0.85rem",
+                fontWeight: 500,
+                transition: "all var(--t-fast)",
+              }}
+              onMouseEnter={(e) => {
+                if (activeCategory !== c.tag) {
+                  e.currentTarget.style.borderColor = "rgba(0,212,255,.4)";
+                  e.currentTarget.style.background = "rgba(0,212,255,.06)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (activeCategory !== c.tag) {
+                  e.currentTarget.style.borderColor = "var(--c-border)";
+                  e.currentTarget.style.background = "var(--c-surface)";
+                }
               }}
             >
               {c.label}
             </button>
           ))}
         </div>
-      </div>
+      </section>
 
-      {/* Platform grid */}
-      <div className="animate-fadeInUp-delay3">
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.65rem', letterSpacing: '0.3em', color: 'rgba(0,245,255,0.5)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
-          PLATFORMS
-          <div style={{ flex: 1, height: 1, background: 'linear-gradient(90deg,rgba(0,245,255,0.3),transparent)' }} />
+      {/* ── Recommendation Feed ────────────────────────────────────────── */}
+      <RecommendationFeed
+        query={feedQuery}
+        platform="youtube,reddit,dailymotion,vimeo"
+        title="🎬 Discover — Videos, Reels & Posts"
+        limit={8}
+        showFilters={true}
+        onBookmark={handleBookmark}
+        style={{ marginBottom: 60 }}
+      />
+
+      {/* ── Trending ───────────────────────────────────────────────────── */}
+      {trending.length > 0 && (
+        <section style={{ marginBottom: 60 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              marginBottom: 18,
+            }}
+          >
+            <div
+              style={{
+                fontFamily: "var(--f-display)",
+                fontSize: "0.65rem",
+                letterSpacing: "0.3em",
+                color: "var(--c-text3)",
+                textTransform: "uppercase",
+              }}
+            >
+              🔥 Trending searches
+            </div>
+            <div
+              style={{
+                flex: 1,
+                height: 1,
+                background:
+                  "linear-gradient(90deg,rgba(255,255,255,.08),transparent)",
+              }}
+            />
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill,minmax(210px,1fr))",
+              gap: 8,
+            }}
+          >
+            {trending.map((t, i) => (
+              <div
+                key={i}
+                onClick={() => handleTrendingClick(t.displayQuery || t.query)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "12px 14px",
+                  background: "var(--c-surface)",
+                  border: "1px solid var(--c-border)",
+                  borderRadius: "var(--r-md)",
+                  cursor: "pointer",
+                  transition: "all var(--t-fast)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--c-surface2)";
+                  e.currentTarget.style.borderColor = "rgba(0,212,255,.3)";
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "var(--c-surface)";
+                  e.currentTarget.style.borderColor = "var(--c-border)";
+                  e.currentTarget.style.transform = "none";
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: "var(--f-display)",
+                    fontSize: "0.65rem",
+                    color: i < 3 ? "var(--c-gold)" : "var(--c-text4)",
+                    width: 22,
+                    textAlign: "center",
+                    flexShrink: 0,
+                    fontWeight: 800,
+                  }}
+                >
+                  #{i + 1}
+                </span>
+                <span
+                  style={{
+                    fontFamily: "var(--f-mono)",
+                    fontSize: "0.78rem",
+                    flex: 1,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {t.displayQuery || t.query}
+                </span>
+                <span
+                  style={{
+                    fontFamily: "var(--f-mono)",
+                    fontSize: "0.6rem",
+                    color: "var(--c-text4)",
+                    flexShrink: 0,
+                  }}
+                >
+                  {t.count?.toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── Platform grid ──────────────────────────────────────────────── */}
+      <section>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 18,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "var(--f-display)",
+              fontSize: "0.65rem",
+              letterSpacing: "0.3em",
+              color: "var(--c-text3)",
+              textTransform: "uppercase",
+            }}
+          >
+            All {PLATFORMS.filter((p) => p.id !== "all").length} platforms
+          </div>
+          <div
+            style={{
+              flex: 1,
+              height: 1,
+              background:
+                "linear-gradient(90deg,rgba(255,255,255,.08),transparent)",
+            }}
+          />
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: 10 }}>
-          {PLATFORMS.filter(p => p.id !== 'all').map(p => (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))",
+            gap: 10,
+          }}
+        >
+          {PLATFORMS.filter((p) => p.id !== "all").map((p) => (
             <div
               key={p.id}
               onClick={() => navigate(`/search?platform=${p.id}`)}
               style={{
-                background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)',
-                borderRadius: 6, padding: '16px 18px', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', gap: 12,
-                transition: 'all 0.22s',
+                background: "rgba(255,255,255,.02)",
+                border: "1px solid rgba(255,255,255,.07)",
+                borderRadius: 10,
+                padding: "16px 18px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                transition: "all 220ms cubic-bezier(.16,1,.3,1)",
               }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor=p.color+'80'; e.currentTarget.style.background='rgba(255,255,255,0.05)'; e.currentTarget.style.transform='translateY(-2px)'; e.currentTarget.style.boxShadow=`0 8px 24px ${p.color}22`; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor='rgba(255,255,255,0.07)'; e.currentTarget.style.background='rgba(255,255,255,0.02)'; e.currentTarget.style.transform='none'; e.currentTarget.style.boxShadow='none'; }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = p.color + "80";
+                e.currentTarget.style.background = "rgba(255,255,255,.05)";
+                e.currentTarget.style.transform = "translateY(-3px)";
+                e.currentTarget.style.boxShadow = `0 10px 30px ${p.color}20`;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "rgba(255,255,255,.07)";
+                e.currentTarget.style.background = "rgba(255,255,255,.02)";
+                e.currentTarget.style.transform = "none";
+                e.currentTarget.style.boxShadow = "none";
+              }}
             >
-              <div style={{ width: 40, height: 40, borderRadius: 4, border: `1px solid ${p.color}60`, background: p.color + '18', display: 'flex', alignItems: 'center', justifyContent: 'center', color: p.color, fontSize: '1rem', fontWeight: 700, flexShrink: 0 }}>
+              <div
+                style={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 8,
+                  border: `1.5px solid ${p.color}55`,
+                  background: p.color + "14",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: p.color,
+                  fontWeight: 900,
+                  fontSize: "1.05rem",
+                  flexShrink: 0,
+                }}
+              >
                 {p.icon}
               </div>
-              <div>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.7rem', fontWeight: 700, color: p.color, letterSpacing: '0.05em' }}>{p.name}</div>
-                <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.3)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>{p.desc}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontFamily: "var(--f-display)",
+                    fontSize: "0.78rem",
+                    fontWeight: 800,
+                    color: p.color,
+                  }}
+                >
+                  {p.name}
+                </div>
+                <div
+                  style={{
+                    fontFamily: "var(--f-mono)",
+                    fontSize: "0.6rem",
+                    color: "rgba(255,255,255,.3)",
+                    marginTop: 2,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {p.desc}
+                </div>
+                <div
+                  style={{
+                    fontFamily: "var(--f-display)",
+                    fontSize: "0.58rem",
+                    color: "var(--c-text4)",
+                    marginTop: 3,
+                  }}
+                >
+                  {p.monthlyUsers} users/mo
+                </div>
               </div>
             </div>
           ))}
         </div>
-      </div>
+      </section>
     </div>
   );
 }
