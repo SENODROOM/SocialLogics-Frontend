@@ -23,8 +23,19 @@ const TYPING_QUERIES = [
   "science explained",
 ];
 
-// Default "discover" query shown on homepage before user searches
 const HOME_DISCOVER_QUERY = "trending viral 2025";
+
+// ─── Short-video platforms shown in the Shorts CTA card ──────────────────────
+const SHORTS_PLATFORMS = [
+  { id: "youtube", name: "Shorts", color: "#FF0000", icon: "▶" },
+  { id: "tiktok", name: "TikTok", color: "#69C9D0", icon: "♪" },
+  { id: "instagram", name: "Reels", color: "#E1306C", icon: "◎" },
+  { id: "snapchat", name: "Spotlight", color: "#FFFC00", icon: "◌" },
+  { id: "twitter", name: "Clips", color: "#e7e7e7", icon: "✕" },
+  { id: "reddit", name: "Reddit", color: "#FF4500", icon: "◍" },
+  { id: "triller", name: "Triller", color: "#FF0069", icon: "T" },
+  { id: "kwai", name: "Kwai", color: "#FF8200", icon: "K" },
+];
 
 function TypingEffect({ queries }) {
   const [text, setText] = useState("");
@@ -106,12 +117,350 @@ const totalUsersBillions = PLATFORMS.filter((p) => p.id !== "all").reduce(
   0,
 );
 
+// ─── Shorts CTA Banner ────────────────────────────────────────────────────────
+function ShortsBanner({ onEnter }) {
+  const [hovered, setHovered] = useState(false);
+  const [tick, setTick] = useState(0);
+
+  // Cycle platform highlight for the marquee effect
+  useEffect(() => {
+    const id = setInterval(
+      () => setTick((t) => (t + 1) % SHORTS_PLATFORMS.length),
+      900,
+    );
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <section
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        margin: "0 0 48px",
+        borderRadius: 16,
+        padding: "0",
+        position: "relative",
+        overflow: "hidden",
+        cursor: "pointer",
+        border: `1px solid ${hovered ? "rgba(124,58,237,.5)" : "rgba(124,58,237,.2)"}`,
+        transition: "all .3s ease",
+        boxShadow: hovered
+          ? "0 20px 60px rgba(124,58,237,.2)"
+          : "0 8px 30px rgba(0,0,0,.4)",
+        transform: hovered ? "translateY(-3px)" : "none",
+      }}
+      onClick={onEnter}
+    >
+      {/* Gradient background */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background:
+            "linear-gradient(135deg,rgba(124,58,237,.18) 0%,rgba(219,39,119,.18) 40%,rgba(0,0,0,.6) 100%)",
+          zIndex: 0,
+        }}
+      />
+
+      {/* Subtle grid */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          backgroundImage:
+            "linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px)",
+          backgroundSize: "32px 32px",
+          zIndex: 0,
+        }}
+      />
+
+      {/* Glowing orb */}
+      <div
+        style={{
+          position: "absolute",
+          right: "-5%",
+          top: "-30%",
+          width: 380,
+          height: 380,
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle,rgba(219,39,119,.22) 0%,transparent 65%)",
+          zIndex: 0,
+          pointerEvents: "none",
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          left: "10%",
+          bottom: "-20%",
+          width: 280,
+          height: 280,
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle,rgba(124,58,237,.18) 0%,transparent 65%)",
+          zIndex: 0,
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Content */}
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          padding: "28px 32px",
+          display: "flex",
+          alignItems: "center",
+          gap: 28,
+          flexWrap: "wrap",
+        }}
+      >
+        {/* Left — text */}
+        <div style={{ flex: 1, minWidth: 220 }}>
+          {/* Label */}
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 7,
+              background: "rgba(124,58,237,.2)",
+              border: "1px solid rgba(124,58,237,.4)",
+              borderRadius: 99,
+              padding: "4px 12px",
+              marginBottom: 14,
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "#db2777",
+                display: "block",
+                animation: "pulse 1.5s ease infinite",
+                boxShadow: "0 0 8px #db2777",
+              }}
+            />
+            <span
+              style={{
+                fontSize: 10,
+                fontFamily: "var(--f-mono)",
+                color: "rgba(255,255,255,.8)",
+                letterSpacing: ".12em",
+                fontWeight: 600,
+              }}
+            >
+              NEW · SHORTS FEED
+            </span>
+          </div>
+
+          <h2
+            style={{
+              fontFamily: "var(--f-display)",
+              fontWeight: 800,
+              fontSize: "clamp(1.4rem,3vw,2.2rem)",
+              lineHeight: 1.1,
+              marginBottom: 10,
+              background:
+                "linear-gradient(135deg,#c084fc 0%,#f0abfc 40%,#fb7185 80%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+            }}
+          >
+            ShortsVerse
+          </h2>
+          <p
+            style={{
+              fontSize: 13,
+              color: "rgba(255,255,255,.6)",
+              lineHeight: 1.6,
+              marginBottom: 18,
+              maxWidth: 380,
+              fontFamily: "var(--f-body)",
+            }}
+          >
+            One infinite feed. Every platform. Scroll through
+            YouTube&nbsp;Shorts, Instagram&nbsp;Reels, TikToks,
+            Snapchat&nbsp;Spotlight and more — all recommended by our
+            cross-platform AI.
+          </p>
+
+          {/* Platform pills */}
+          <div
+            style={{
+              display: "flex",
+              gap: 7,
+              flexWrap: "wrap",
+              marginBottom: 22,
+            }}
+          >
+            {SHORTS_PLATFORMS.map((pl, i) => (
+              <div
+                key={pl.id}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  padding: "4px 10px",
+                  borderRadius: 20,
+                  background:
+                    i === tick ? `${pl.color}25` : "rgba(255,255,255,.06)",
+                  border:
+                    i === tick
+                      ? `1px solid ${pl.color}`
+                      : "1px solid rgba(255,255,255,.1)",
+                  transition: "all .3s",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: i === tick ? pl.color : "rgba(255,255,255,.5)",
+                  fontFamily: "var(--f-display)",
+                }}
+              >
+                <span>{pl.icon}</span> {pl.name}
+              </div>
+            ))}
+          </div>
+
+          {/* CTA button */}
+          <button
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "12px 28px",
+              borderRadius: 999,
+              border: "none",
+              background: "linear-gradient(135deg,#7c3aed,#db2777)",
+              color: "#fff",
+              fontFamily: "var(--f-display)",
+              fontSize: "0.85rem",
+              fontWeight: 800,
+              letterSpacing: ".04em",
+              cursor: "pointer",
+              boxShadow: hovered
+                ? "0 0 32px rgba(124,58,237,.5)"
+                : "0 4px 20px rgba(124,58,237,.35)",
+              transition: "all .25s",
+              transform: hovered ? "scale(1.04)" : "scale(1)",
+            }}
+          >
+            <span style={{ fontSize: 18 }}>▶</span>
+            Watch Shorts
+            <span style={{ fontSize: 16 }}>→</span>
+          </button>
+        </div>
+
+        {/* Right — phone mockup */}
+        <div
+          style={{
+            flexShrink: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            opacity: hovered ? 1 : 0.85,
+            transition: "opacity .3s",
+          }}
+        >
+          {/* Stacked card previews */}
+          {[0, 1, 2].map((n) => {
+            const pl = SHORTS_PLATFORMS[(tick + n) % SHORTS_PLATFORMS.length];
+            return (
+              <div
+                key={n}
+                style={{
+                  width: 130,
+                  borderRadius: 10,
+                  overflow: "hidden",
+                  border: `1px solid ${pl.color}33`,
+                  background: `linear-gradient(160deg,${pl.color}12,rgba(0,0,0,.6))`,
+                  padding: "10px 12px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  transform:
+                    n === 0
+                      ? "scale(1.02)"
+                      : n === 2
+                        ? "scale(.97)"
+                        : "scale(1)",
+                  transition: "transform .3s",
+                  opacity: n === 0 ? 1 : n === 1 ? 0.75 : 0.5,
+                }}
+              >
+                <span style={{ fontSize: 20 }}>
+                  {
+                    [
+                      "☕",
+                      "🎮",
+                      "🗼",
+                      "🔥",
+                      "🎨",
+                      "🏀",
+                      "🌙",
+                      "😹",
+                      "🤖",
+                      "💪",
+                    ][(tick + n) % 10]
+                  }
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 9,
+                      color: pl.color,
+                      fontWeight: 700,
+                      fontFamily: "var(--f-display)",
+                    }}
+                  >
+                    {pl.icon} {pl.name}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 8,
+                      color: "rgba(255,255,255,.45)",
+                      marginTop: 2,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    @creator_{((tick + n + 1) * 7) % 99}
+                  </div>
+                  <div
+                    style={{
+                      height: 2,
+                      background: "rgba(255,255,255,.1)",
+                      borderRadius: 2,
+                      marginTop: 5,
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${30 + (((tick + n) * 23) % 55)}%`,
+                        background: pl.color,
+                        borderRadius: 2,
+                        transition: "width .5s ease",
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Main Home page ───────────────────────────────────────────────────────────
 export default function Home() {
   const [trending, setTrending] = useState([]);
   const [stats, setStats] = useState(null);
   const [activeCategory, setActiveCategory] = useState(null);
   const [searchCount, setSearchCount] = useState(0);
-  // Track what the user just searched to feed into RecommendationFeed
   const [feedQuery, setFeedQuery] = useState(HOME_DISCOVER_QUERY);
   const navigate = useNavigate();
   const { search, openAll } = useSearch();
@@ -179,7 +528,7 @@ export default function Home() {
 
   return (
     <div style={{ maxWidth: 1280, margin: "0 auto", padding: "0 24px 100px" }}>
-      {/* ── Hero ──────────────────────────────────────────────────────── */}
+      {/* ── Hero ───────────────────────────────────────────────────── */}
       <section style={{ padding: "72px 0 60px", textAlign: "center" }}>
         {/* Live status pill */}
         <div
@@ -211,7 +560,7 @@ export default function Home() {
               fontFamily: "var(--f-mono)",
               fontSize: "0.68rem",
               color: "var(--c-text2)",
-              letterSpacing: "0.1em",
+              letterSpacing: ".1em",
             }}
           >
             {stats
@@ -254,7 +603,7 @@ export default function Home() {
               fontFamily: "var(--f-display)",
               fontWeight: 800,
               fontSize: "clamp(2.6rem,8vw,5.5rem)",
-              letterSpacing: "-0.01em",
+              letterSpacing: "-.01em",
               background:
                 "linear-gradient(135deg,var(--c-cyan) 0%,#fff 40%,#80c0ff 70%,#a855f7 100%)",
               WebkitBackgroundClip: "text",
@@ -272,7 +621,7 @@ export default function Home() {
             fontFamily: "var(--f-mono)",
             fontSize: "clamp(0.7rem,1.8vw,0.9rem)",
             color: "var(--c-text3)",
-            letterSpacing: "0.3em",
+            letterSpacing: ".3em",
             marginBottom: 14,
             textTransform: "uppercase",
           }}
@@ -304,54 +653,29 @@ export default function Home() {
             padding: "0 8px",
           }}
         >
-          <div
-            style={{
-              position: "absolute",
-              top: -10,
-              left: -2,
-              width: 18,
-              height: 18,
-              borderTop: "2px solid rgba(0,212,255,.5)",
-              borderLeft: "2px solid rgba(0,212,255,.5)",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              top: -10,
-              right: -2,
-              width: 18,
-              height: 18,
-              borderTop: "2px solid rgba(0,212,255,.5)",
-              borderRight: "2px solid rgba(0,212,255,.5)",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              bottom: -10,
-              left: -2,
-              width: 18,
-              height: 18,
-              borderBottom: "2px solid rgba(0,212,255,.5)",
-              borderLeft: "2px solid rgba(0,212,255,.5)",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              bottom: -10,
-              right: -2,
-              width: 18,
-              height: 18,
-              borderBottom: "2px solid rgba(0,212,255,.5)",
-              borderRight: "2px solid rgba(0,212,255,.5)",
-            }}
-          />
+          {[
+            ["top", "-10px", "left", "-2px", "borderTop", "borderLeft"],
+            ["top", "-10px", "right", "-2px", "borderTop", "borderRight"],
+            ["bottom", "-10px", "left", "-2px", "borderBottom", "borderLeft"],
+            ["bottom", "-10px", "right", "-2px", "borderBottom", "borderRight"],
+          ].map(([s1, v1, s2, v2, b1, b2], i) => (
+            <div
+              key={i}
+              style={{
+                position: "absolute",
+                [s1]: v1,
+                [s2]: v2,
+                width: 18,
+                height: 18,
+                [b1]: "2px solid rgba(0,212,255,.5)",
+                [b2]: "2px solid rgba(0,212,255,.5)",
+              }}
+            />
+          ))}
           <SearchBar large autoFocus onSearch={handleSearch} />
         </div>
 
-        {/* Stats bar */}
+        {/* Stats */}
         <div
           className="animate-fade-up animate-delay-4"
           style={{
@@ -397,7 +721,7 @@ export default function Home() {
                   fontFamily: "var(--f-mono)",
                   fontSize: "0.62rem",
                   color: "var(--c-text4)",
-                  letterSpacing: "0.15em",
+                  letterSpacing: ".15em",
                   marginTop: 4,
                 }}
               >
@@ -483,7 +807,10 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── Categories ─────────────────────────────────────────────────── */}
+      {/* ── ★ SHORTS CTA BANNER ────────────────────────────────────── */}
+      <ShortsBanner onEnter={() => navigate("/shorts")} />
+
+      {/* ── Categories ─────────────────────────────────────────────── */}
       <section style={{ marginBottom: 40 }}>
         <div
           style={{
@@ -497,7 +824,7 @@ export default function Home() {
             style={{
               fontFamily: "var(--f-display)",
               fontSize: "0.65rem",
-              letterSpacing: "0.3em",
+              letterSpacing: ".3em",
               color: "var(--c-text3)",
               textTransform: "uppercase",
             }}
@@ -552,7 +879,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── Recommendation Feed ────────────────────────────────────────── */}
+      {/* ── Recommendation Feed ────────────────────────────────────── */}
       <RecommendationFeed
         query={feedQuery}
         platform="youtube,reddit,dailymotion,vimeo"
@@ -563,7 +890,7 @@ export default function Home() {
         style={{ marginBottom: 60 }}
       />
 
-      {/* ── Trending ───────────────────────────────────────────────────── */}
+      {/* ── Trending ───────────────────────────────────────────────── */}
       {trending.length > 0 && (
         <section style={{ marginBottom: 60 }}>
           <div
@@ -578,7 +905,7 @@ export default function Home() {
               style={{
                 fontFamily: "var(--f-display)",
                 fontSize: "0.65rem",
-                letterSpacing: "0.3em",
+                letterSpacing: ".3em",
                 color: "var(--c-text3)",
                 textTransform: "uppercase",
               }}
@@ -668,7 +995,7 @@ export default function Home() {
         </section>
       )}
 
-      {/* ── Platform grid ──────────────────────────────────────────────── */}
+      {/* ── Platform grid ──────────────────────────────────────────── */}
       <section>
         <div
           style={{
@@ -682,7 +1009,7 @@ export default function Home() {
             style={{
               fontFamily: "var(--f-display)",
               fontSize: "0.65rem",
-              letterSpacing: "0.3em",
+              letterSpacing: ".3em",
               color: "var(--c-text3)",
               textTransform: "uppercase",
             }}

@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 const NAV = [
   { path: "/", label: "Home" },
   { path: "/search", label: "Search" },
+  { path: "/shorts", label: "▶ Shorts", highlight: true }, // ← NEW
   { path: "/history", label: "History", auth: true },
   { path: "/bookmarks", label: "Bookmarks", auth: true },
   { path: "/dashboard", label: "Dashboard", auth: true },
@@ -23,14 +24,11 @@ export default function Navbar() {
     return () => window.removeEventListener("scroll", fn);
   }, []);
 
-  useEffect(() => {}, [location]);
-
   const handleLogout = () => {
     logout();
     toast.success("Signed out");
     navigate("/");
   };
-
   const isActive = (path) =>
     path === "/"
       ? location.pathname === "/"
@@ -105,36 +103,66 @@ export default function Navbar() {
           </Link>
 
           {/* Desktop nav */}
-          <div style={{ display: "flex", gap: 2, flex: 1 }}>
-            {NAV.filter((l) => !l.auth || user).map((l) => (
-              <Link
-                key={l.path}
-                to={l.path}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: "var(--r-sm)",
-                  fontFamily: "var(--f-display)",
-                  fontSize: "0.78rem",
-                  fontWeight: 600,
-                  color: isActive(l.path) ? "var(--c-cyan)" : "var(--c-text3)",
-                  background: isActive(l.path)
-                    ? "rgba(0,212,255,0.08)"
-                    : "transparent",
-                  transition: "all var(--t-fast)",
-                  letterSpacing: "0.02em",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive(l.path))
-                    e.currentTarget.style.color = "var(--c-text)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive(l.path))
-                    e.currentTarget.style.color = "var(--c-text3)";
-                }}
-              >
-                {l.label}
-              </Link>
-            ))}
+          <div
+            style={{ display: "flex", gap: 2, flex: 1, alignItems: "center" }}
+          >
+            {NAV.filter((l) => !l.auth || user).map((l) => {
+              const active = isActive(l.path);
+              // Special pill style for Shorts
+              if (l.highlight)
+                return (
+                  <Link
+                    key={l.path}
+                    to={l.path}
+                    style={{
+                      padding: "5px 13px",
+                      borderRadius: 20,
+                      fontFamily: "var(--f-display)",
+                      fontSize: "0.76rem",
+                      fontWeight: 700,
+                      background: active
+                        ? "linear-gradient(90deg,#7c3aed,#db2777)"
+                        : "linear-gradient(90deg,rgba(124,58,237,0.18),rgba(219,39,119,0.18))",
+                      color: "#fff",
+                      border: active
+                        ? "none"
+                        : "1px solid rgba(124,58,237,0.35)",
+                      boxShadow: active ? "0 0 14px #7c3aed55" : "none",
+                      transition: "all 0.2s",
+                      letterSpacing: "0.02em",
+                      textDecoration: "none",
+                    }}
+                  >
+                    {l.label}
+                  </Link>
+                );
+              return (
+                <Link
+                  key={l.path}
+                  to={l.path}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "var(--r-sm)",
+                    fontFamily: "var(--f-display)",
+                    fontSize: "0.78rem",
+                    fontWeight: 600,
+                    color: active ? "var(--c-cyan)" : "var(--c-text3)",
+                    background: active ? "rgba(0,212,255,0.08)" : "transparent",
+                    transition: "all var(--t-fast)",
+                    letterSpacing: "0.02em",
+                    textDecoration: "none",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!active) e.currentTarget.style.color = "var(--c-text)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active) e.currentTarget.style.color = "var(--c-text3)";
+                  }}
+                >
+                  {l.label}
+                </Link>
+              );
+            })}
           </div>
 
           {/* Right side */}

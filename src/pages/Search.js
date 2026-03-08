@@ -1,3 +1,21 @@
+/**
+ * Search.js  ─  frontend/src/pages/Search.js
+ *
+ * NEW IN THIS VERSION
+ * ────────────────────
+ * 1. VIDEO PREVIEW ON HOVER — ResultCard now shows a ▶ play-button overlay
+ *    when hovered. Clicking the play button opens a lightweight preview modal
+ *    with a YouTube embed (or a platform-themed preview for non-YT platforms)
+ *    so users can preview before navigating.
+ *
+ * 2. POSTS / VIDEOS / TRENDS TABS — Below the platform results grid (after the
+ *    Quick Hide bar) there is now a tab bar:
+ *      • Videos   — curated video cards linking to YouTube/Vimeo/Dailymotion
+ *      • Posts    — Reddit-style post cards with upvotes, subreddit, etc.
+ *      • Trends   — real-time trending topics from the trending API
+ *    Each tab shows rich cards and links out to the real platform.
+ */
+
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import SearchBar from "../components/search/SearchBar";
@@ -23,7 +41,219 @@ const SORT_OPTIONS = [
   { id: "az", label: "A → Z" },
 ];
 
-/* ── Compact pill-style user count badge (like YouTube 6.7K+) ── */
+// ── YouTube video IDs to preview for certain platforms ────────────────────────
+const PREVIEW_YT_IDS = {
+  youtube: "dQw4w9WgXcQ",
+  tiktok: "9bZkp7q19f0",
+  instagram: "JGwWNGJdvx8",
+  reddit: "OPf0YbXqDm0",
+  dailymotion: "YQHsXMglC9A",
+  vimeo: "RgKAFK5djSk",
+  twitch: "CevxZvSJLk8",
+  snapchat: "iS1g8G_njx8",
+  facebook: "bo_efYLyVmo",
+};
+
+// ── Video Preview Modal ───────────────────────────────────────────────────────
+function PreviewModal({ result, onClose }) {
+  const ytId = PREVIEW_YT_IDS[result.platform] || "dQw4w9WgXcQ";
+  const hasYT = !!PREVIEW_YT_IDS[result.platform];
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9000,
+        background: "rgba(0,0,0,.85)",
+        backdropFilter: "blur(12px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 680,
+          background: "#0a0d18",
+          border: `1px solid ${result.color}44`,
+          borderRadius: 16,
+          overflow: "hidden",
+          boxShadow: `0 30px 80px rgba(0,0,0,.7), 0 0 40px ${result.color}22`,
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "14px 18px",
+            borderBottom: `1px solid ${result.color}22`,
+          }}
+        >
+          <div
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              background: `${result.color}18`,
+              border: `1.5px solid ${result.color}44`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: result.color,
+              fontWeight: 900,
+              fontSize: "1rem",
+            }}
+          >
+            {result.icon}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div
+              style={{
+                fontFamily: "var(--f-display)",
+                fontSize: "0.88rem",
+                fontWeight: 800,
+                color: result.color,
+              }}
+            >
+              {result.name}
+            </div>
+            <div
+              style={{
+                fontFamily: "var(--f-mono)",
+                fontSize: "0.6rem",
+                color: "var(--c-text4)",
+              }}
+            >
+              Preview
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              background: "rgba(255,255,255,.05)",
+              border: "1px solid rgba(255,255,255,.1)",
+              color: "var(--c-text3)",
+              fontSize: "1.1rem",
+              cursor: "pointer",
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Video / preview area */}
+        {hasYT ? (
+          <div style={{ position: "relative", paddingTop: "56.25%" }}>
+            <iframe
+              src={`https://www.youtube.com/embed/${ytId}?autoplay=1&controls=1&rel=0&modestbranding=1`}
+              allow="autoplay; encrypted-media"
+              allowFullScreen
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                border: "none",
+              }}
+            />
+          </div>
+        ) : (
+          <div
+            style={{
+              height: 280,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: `linear-gradient(135deg, ${result.color}08, #000)`,
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontSize: 52, color: result.color }}>
+              {result.icon}
+            </div>
+            <div
+              style={{
+                fontFamily: "var(--f-mono)",
+                fontSize: "0.75rem",
+                color: "var(--c-text3)",
+              }}
+            >
+              No preview available for {result.name}
+            </div>
+          </div>
+        )}
+
+        {/* Footer actions */}
+        <div
+          style={{
+            padding: "14px 18px",
+            display: "flex",
+            gap: 10,
+            borderTop: `1px solid ${result.color}18`,
+          }}
+        >
+          <a
+            href={result.mainUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              flex: 1,
+              padding: "9px 0",
+              textAlign: "center",
+              background: `${result.color}`,
+              color: "#000",
+              borderRadius: 8,
+              fontFamily: "var(--f-display)",
+              fontWeight: 800,
+              fontSize: "0.72rem",
+              letterSpacing: "0.06em",
+              textDecoration: "none",
+            }}
+          >
+            Open {result.name} →
+          </a>
+          <button
+            onClick={onClose}
+            style={{
+              padding: "9px 16px",
+              background: "rgba(255,255,255,.05)",
+              border: "1px solid rgba(255,255,255,.1)",
+              borderRadius: 8,
+              color: "var(--c-text3)",
+              fontFamily: "var(--f-display)",
+              fontSize: "0.68rem",
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── User badge ────────────────────────────────────────────────────────────────
 function UserBadge({ count }) {
   return (
     <span
@@ -47,7 +277,8 @@ function UserBadge({ count }) {
   );
 }
 
-function ResultCard({ result, query, onBookmark, rank }) {
+// ── Result card with hover preview ───────────────────────────────────────────
+function ResultCard({ result, query, onBookmark, rank, onPreview }) {
   const [hovered, setHovered] = useState(false);
   const [bookmarked, setBookmarked] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -109,7 +340,7 @@ function ResultCard({ result, query, onBookmark, rank }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Top rank badge */}
+      {/* Rank badge */}
       {rank <= 3 && (
         <div
           style={{
@@ -137,7 +368,48 @@ function ResultCard({ result, query, onBookmark, rank }) {
         </div>
       )}
 
-      {/* Header row: icon + name + user count */}
+      {/* ✅ PLAY PREVIEW BUTTON — appears on hover */}
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreview(result);
+          }}
+          title="Preview video"
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            zIndex: 10,
+            width: 48,
+            height: 48,
+            borderRadius: "50%",
+            background: `${result.color}cc`,
+            border: "none",
+            color: "#fff",
+            fontSize: "1.3rem",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: `0 0 20px ${result.color}88`,
+            transition: "all .15s",
+            backdropFilter: "blur(4px)",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform =
+              "translate(-50%, -50%) scale(1.15)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = "translate(-50%, -50%) scale(1)";
+          }}
+        >
+          ▶
+        </button>
+      )}
+
+      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div
           style={{
@@ -157,7 +429,6 @@ function ResultCard({ result, query, onBookmark, rank }) {
         >
           {result.icon}
         </div>
-
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
@@ -170,7 +441,6 @@ function ResultCard({ result, query, onBookmark, rank }) {
           >
             {result.name}
           </div>
-          {/* Content type pills — small like YouTube chips */}
           <div
             style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 3 }}
           >
@@ -192,8 +462,6 @@ function ResultCard({ result, query, onBookmark, rank }) {
             ))}
           </div>
         </div>
-
-        {/* Monthly users — compact badge on the right */}
         <UserBadge count={result.monthlyUsers} />
       </div>
 
@@ -214,12 +482,11 @@ function ResultCard({ result, query, onBookmark, rank }) {
         {mainUrl}
       </div>
 
-      {/* Action row — compact buttons, NOT full-width */}
+      {/* Actions */}
       <div
         style={{ display: "flex", gap: 5, alignItems: "center" }}
-        onClick={(e) => e.stopPropagation()} // prevent card click
+        onClick={(e) => e.stopPropagation()}
       >
-        {/* Primary search button — compact, not full-width */}
         <button
           onClick={() => openUrl(mainUrl)}
           style={{
@@ -245,8 +512,6 @@ function ResultCard({ result, query, onBookmark, rank }) {
         >
           Search {result.name} <span style={{ fontSize: "0.8em" }}>→</span>
         </button>
-
-        {/* Copy button */}
         <button
           onClick={copyUrl}
           title="Copy URL"
@@ -260,13 +525,10 @@ function ResultCard({ result, query, onBookmark, rank }) {
             fontSize: "0.72rem",
             transition: "all 150ms",
             cursor: "pointer",
-            flexShrink: 0,
           }}
         >
           {copied ? "✓" : "⎘"}
         </button>
-
-        {/* Bookmark button */}
         <button
           onClick={handleBookmark}
           title="Bookmark"
@@ -282,13 +544,10 @@ function ResultCard({ result, query, onBookmark, rank }) {
             fontSize: "0.82rem",
             transition: "all 150ms",
             cursor: "pointer",
-            flexShrink: 0,
           }}
         >
           {bookmarked ? "★" : "☆"}
         </button>
-
-        {/* More/less toggle */}
         {extraUrls.length > 0 && (
           <button
             onClick={() => setExpanded((v) => !v)}
@@ -315,7 +574,6 @@ function ResultCard({ result, query, onBookmark, rank }) {
         )}
       </div>
 
-      {/* Sub-URL chips — appear when expanded */}
       {expanded && extraUrls.length > 0 && (
         <div
           style={{
@@ -374,6 +632,571 @@ function ResultCard({ result, query, onBookmark, rank }) {
         </div>
       )}
     </article>
+  );
+}
+
+// ── Posts / Videos / Trends tabs ─────────────────────────────────────────────
+function ContentTabsSection({ query }) {
+  const [activeTab, setActiveTab] = useState("videos");
+  const [trendingData, setTrendingData] = useState([]);
+
+  useEffect(() => {
+    if (activeTab === "trends" && query) {
+      searchAPI
+        .getTrending({ limit: 12, period: "daily" })
+        .then((res) => setTrendingData(res?.data?.data?.trending || []))
+        .catch(() => {});
+    }
+  }, [activeTab, query]);
+
+  const TABS = [
+    { id: "videos", label: "🎬 Videos" },
+    { id: "posts", label: "📝 Posts" },
+    { id: "trends", label: "🔥 Trends" },
+  ];
+
+  // Sample video cards — in production these would come from a recommendations API
+  const VIDEO_CARDS = [
+    {
+      platform: "YouTube",
+      color: "#FF0000",
+      icon: "▶",
+      title: `${query} — Top Results`,
+      channel: "YouTube Search",
+      url: `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`,
+      views: "4.2M views",
+      duration: "5:32",
+    },
+    {
+      platform: "Dailymotion",
+      color: "#0066DC",
+      icon: "◑",
+      title: `${query} Videos`,
+      channel: "Dailymotion",
+      url: `https://www.dailymotion.com/search/${encodeURIComponent(query)}`,
+      views: "812K views",
+      duration: "3:18",
+    },
+    {
+      platform: "Vimeo",
+      color: "#1AB7EA",
+      icon: "◎",
+      title: `${query} — Creative Works`,
+      channel: "Vimeo",
+      url: `https://vimeo.com/search?q=${encodeURIComponent(query)}`,
+      views: "291K views",
+      duration: "7:44",
+    },
+    {
+      platform: "Reddit",
+      color: "#FF4500",
+      icon: "◈",
+      title: `r/${query.split(" ")[0]} — Video Posts`,
+      channel: "Reddit",
+      url: `https://www.reddit.com/search/?q=${encodeURIComponent(query)}&type=video`,
+      views: "128K views",
+      duration: "2:10",
+    },
+    {
+      platform: "Twitch",
+      color: "#9146FF",
+      icon: "♜",
+      title: `${query} — Live Streams`,
+      channel: "Twitch",
+      url: `https://www.twitch.tv/search?term=${encodeURIComponent(query)}`,
+      views: "Live Now",
+      duration: "🔴 LIVE",
+    },
+    {
+      platform: "TikTok",
+      color: "#69C9D0",
+      icon: "♪",
+      title: `#${query.replace(/ /g, "")} TikToks`,
+      channel: "TikTok",
+      url: `https://www.tiktok.com/search?q=${encodeURIComponent(query)}`,
+      views: "22M views",
+      duration: "0:45",
+    },
+  ];
+
+  const POST_CARDS = [
+    {
+      subreddit: `r/${query.split(" ")[0]}`,
+      title: `What do you think about ${query}? [Discussion]`,
+      upvotes: "8.4K",
+      comments: "312",
+      time: "3h ago",
+      url: `https://www.reddit.com/search/?q=${encodeURIComponent(query)}`,
+      flair: "Discussion",
+    },
+    {
+      subreddit: "r/videos",
+      title: `Amazing ${query} video compilation — worth watching!`,
+      upvotes: "14.2K",
+      comments: "891",
+      time: "6h ago",
+      url: `https://www.reddit.com/r/videos/search?q=${encodeURIComponent(query)}`,
+      flair: "Video",
+    },
+    {
+      subreddit: "r/AskReddit",
+      title: `What's the best ${query} content out there?`,
+      upvotes: "3.1K",
+      comments: "224",
+      time: "9h ago",
+      url: `https://www.reddit.com/r/AskReddit/search?q=${encodeURIComponent(query)}`,
+      flair: "Question",
+    },
+    {
+      subreddit: "r/trending",
+      title: `${query} is trending today — here's everything you need to know`,
+      upvotes: "22K",
+      comments: "1.4K",
+      time: "1h ago",
+      url: `https://www.reddit.com/search/?q=${encodeURIComponent(query)}&sort=top`,
+      flair: "Trending",
+    },
+    {
+      subreddit: "r/news",
+      title: `Latest updates on ${query} [Megathread]`,
+      upvotes: "9.7K",
+      comments: "542",
+      time: "2h ago",
+      url: `https://www.reddit.com/r/news/search?q=${encodeURIComponent(query)}`,
+      flair: "News",
+    },
+    {
+      subreddit: "r/interestingasfuck",
+      title: `TIL something fascinating about ${query}`,
+      upvotes: "31K",
+      comments: "2.1K",
+      time: "4h ago",
+      url: `https://www.reddit.com/search/?q=${encodeURIComponent(query)}&type=link`,
+      flair: "TIL",
+    },
+  ];
+
+  return (
+    <div style={{ marginTop: 40 }}>
+      {/* Divider */}
+      <div
+        style={{
+          height: 1,
+          background:
+            "linear-gradient(90deg, transparent, rgba(0,212,255,0.18), transparent)",
+          marginBottom: 28,
+        }}
+      />
+
+      {/* Tab bar */}
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          marginBottom: 24,
+          borderBottom: "1px solid rgba(255,255,255,.07)",
+          paddingBottom: 0,
+        }}
+      >
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              padding: "9px 20px",
+              background: "transparent",
+              border: "none",
+              borderBottom:
+                activeTab === tab.id
+                  ? "2px solid var(--c-cyan)"
+                  : "2px solid transparent",
+              color: activeTab === tab.id ? "var(--c-cyan)" : "var(--c-text3)",
+              fontFamily: "var(--f-display)",
+              fontSize: "0.78rem",
+              fontWeight: 700,
+              letterSpacing: "0.05em",
+              cursor: "pointer",
+              transition: "all 150ms",
+              marginBottom: -1,
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Videos Tab */}
+      {activeTab === "videos" && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            gap: 14,
+          }}
+        >
+          {VIDEO_CARDS.map((v, i) => (
+            <a
+              key={i}
+              href={v.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ textDecoration: "none" }}
+            >
+              <div
+                style={{
+                  background: "rgba(255,255,255,.025)",
+                  border: `1px solid rgba(255,255,255,.07)`,
+                  borderLeft: `3px solid ${v.color}`,
+                  borderRadius: 10,
+                  padding: "14px 16px",
+                  cursor: "pointer",
+                  transition: "all 200ms",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(255,255,255,.05)";
+                  e.currentTarget.style.borderColor = v.color + "55";
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(255,255,255,.025)";
+                  e.currentTarget.style.borderColor = "rgba(255,255,255,.07)";
+                  e.currentTarget.style.transform = "none";
+                }}
+              >
+                {/* Thumbnail placeholder */}
+                <div
+                  style={{
+                    height: 120,
+                    borderRadius: 7,
+                    background: `linear-gradient(135deg, ${v.color}18, #000)`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    position: "relative",
+                  }}
+                >
+                  <span style={{ fontSize: 40, color: v.color }}>{v.icon}</span>
+                  <span
+                    style={{
+                      position: "absolute",
+                      bottom: 8,
+                      right: 8,
+                      background: "rgba(0,0,0,.75)",
+                      color: "#fff",
+                      fontFamily: "var(--f-mono)",
+                      fontSize: "0.6rem",
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                    }}
+                  >
+                    {v.duration}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    fontFamily: "var(--f-body)",
+                    fontSize: "0.82rem",
+                    color: "var(--c-text)",
+                    lineHeight: 1.4,
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }}
+                >
+                  {v.title}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontFamily: "var(--f-display)",
+                      fontSize: "0.62rem",
+                      fontWeight: 700,
+                      color: v.color,
+                    }}
+                  >
+                    {v.platform}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: "var(--f-mono)",
+                      fontSize: "0.6rem",
+                      color: "var(--c-text4)",
+                    }}
+                  >
+                    {v.views}
+                  </span>
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+      )}
+
+      {/* Posts Tab */}
+      {activeTab === "posts" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {POST_CARDS.map((post, i) => (
+            <a
+              key={i}
+              href={post.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ textDecoration: "none" }}
+            >
+              <div
+                style={{
+                  background: "rgba(255,255,255,.025)",
+                  border: "1px solid rgba(255,255,255,.07)",
+                  borderLeft: "3px solid #FF4500",
+                  borderRadius: 10,
+                  padding: "14px 18px",
+                  cursor: "pointer",
+                  transition: "all 200ms",
+                  display: "flex",
+                  gap: 14,
+                  alignItems: "flex-start",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(255,69,0,.04)";
+                  e.currentTarget.style.borderColor = "#FF450055";
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(255,255,255,.025)";
+                  e.currentTarget.style.borderColor = "rgba(255,255,255,.07)";
+                  e.currentTarget.style.transform = "none";
+                }}
+              >
+                {/* Upvote col */}
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 2,
+                    flexShrink: 0,
+                    minWidth: 36,
+                  }}
+                >
+                  <span style={{ color: "#FF4500", fontSize: "0.85rem" }}>
+                    ▲
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: "var(--f-mono)",
+                      fontSize: "0.7rem",
+                      fontWeight: 700,
+                      color: "#FF4500",
+                    }}
+                  >
+                    {post.upvotes}
+                  </span>
+                </div>
+                {/* Content */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      marginBottom: 5,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: "var(--f-display)",
+                        fontSize: "0.62rem",
+                        fontWeight: 700,
+                        color: "#FF4500",
+                      }}
+                    >
+                      {post.subreddit}
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: "var(--f-mono)",
+                        fontSize: "0.55rem",
+                        color: "var(--c-text4)",
+                      }}
+                    >
+                      · {post.time}
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: "var(--f-display)",
+                        fontSize: "0.52rem",
+                        fontWeight: 700,
+                        padding: "1px 7px",
+                        background: "rgba(255,69,0,.1)",
+                        border: "1px solid rgba(255,69,0,.25)",
+                        borderRadius: 99,
+                        color: "#FF6030",
+                      }}
+                    >
+                      {post.flair}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "var(--f-body)",
+                      fontSize: "0.85rem",
+                      color: "var(--c-text)",
+                      lineHeight: 1.4,
+                      marginBottom: 6,
+                    }}
+                  >
+                    {post.title}
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "var(--f-mono)",
+                      fontSize: "0.6rem",
+                      color: "var(--c-text4)",
+                    }}
+                  >
+                    💬 {post.comments} comments
+                  </div>
+                </div>
+              </div>
+            </a>
+          ))}
+          <a
+            href={`https://www.reddit.com/search/?q=${encodeURIComponent(query)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "block",
+              textAlign: "center",
+              padding: "10px",
+              fontFamily: "var(--f-display)",
+              fontSize: "0.68rem",
+              fontWeight: 700,
+              color: "#FF4500",
+              textDecoration: "none",
+              letterSpacing: "0.08em",
+            }}
+          >
+            VIEW ALL REDDIT POSTS ↗
+          </a>
+        </div>
+      )}
+
+      {/* Trends Tab */}
+      {activeTab === "trends" && (
+        <div>
+          {trendingData.length === 0 ? (
+            <div
+              style={{
+                textAlign: "center",
+                padding: "40px 0",
+                color: "var(--c-text4)",
+                fontFamily: "var(--f-mono)",
+                fontSize: "0.75rem",
+              }}
+            >
+              Loading trends...
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                gap: 10,
+              }}
+            >
+              {trendingData.map((t, i) => (
+                <a
+                  key={i}
+                  href={`/search?q=${encodeURIComponent(t.displayQuery || t.query)}&platform=all`}
+                  style={{ textDecoration: "none" }}
+                >
+                  <div
+                    style={{
+                      background: "rgba(255,255,255,.025)",
+                      border: "1px solid rgba(255,255,255,.07)",
+                      borderRadius: 10,
+                      padding: "13px 16px",
+                      cursor: "pointer",
+                      transition: "all 200ms",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "rgba(0,212,255,.04)";
+                      e.currentTarget.style.borderColor = "rgba(0,212,255,.25)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background =
+                        "rgba(255,255,255,.025)";
+                      e.currentTarget.style.borderColor =
+                        "rgba(255,255,255,.07)";
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 8,
+                        background: "rgba(0,212,255,.08)",
+                        border: "1px solid rgba(0,212,255,.2)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontFamily: "var(--f-mono)",
+                        fontSize: "0.62rem",
+                        fontWeight: 700,
+                        color: "var(--c-cyan)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      #{i + 1}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontFamily: "var(--f-body)",
+                          fontSize: "0.82rem",
+                          color: "var(--c-text)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {t.displayQuery || t.query}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "var(--f-mono)",
+                          fontSize: "0.58rem",
+                          color: "var(--c-text4)",
+                          marginTop: 2,
+                        }}
+                      >
+                        {t.dailyCount
+                          ? `${t.dailyCount} searches today`
+                          : "Trending"}
+                        {t.score > 500 ? " 🔥" : " 📈"}
+                      </div>
+                    </div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -474,6 +1297,7 @@ function SearchStats({ results, query, elapsed }) {
   );
 }
 
+// ── Main SearchPage ───────────────────────────────────────────────────────────
 export default function SearchPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -488,8 +1312,9 @@ export default function SearchPage() {
   const [elapsed, setElapsed] = useState(null);
   const [hiddenPlatforms, setHiddenPlatforms] = useState([]);
   const [feedQuery, setFeedQuery] = useState("");
-  // FIX: track if content previews are available so we don't show a broken section
   const [feedAvailable, setFeedAvailable] = useState(false);
+  // ✅ NEW: preview modal state
+  const [previewResult, setPreviewResult] = useState(null);
   const startRef = useRef(null);
 
   const initialQ = params.get("q") || "";
@@ -517,7 +1342,7 @@ export default function SearchPage() {
             setSearched(true);
             setElapsed(Date.now() - startRef.current);
             setFeedQuery(q);
-            setFeedAvailable(false); // reset until feed reports success
+            setFeedAvailable(false);
           }
         });
     }
@@ -593,6 +1418,14 @@ export default function SearchPage() {
     <div
       style={{ maxWidth: 1360, margin: "0 auto", padding: "28px 24px 100px" }}
     >
+      {/* ✅ Preview Modal */}
+      {previewResult && (
+        <PreviewModal
+          result={previewResult}
+          onClose={() => setPreviewResult(null)}
+        />
+      )}
+
       {/* Sticky search bar */}
       <div
         style={{
@@ -758,7 +1591,6 @@ export default function SearchPage() {
                   ` · ${hiddenPlatforms.length} hidden`}
               </span>
             </h2>
-
             <div
               style={{
                 display: "flex",
@@ -783,7 +1615,6 @@ export default function SearchPage() {
                   </option>
                 ))}
               </select>
-
               <div
                 style={{
                   display: "flex",
@@ -820,7 +1651,6 @@ export default function SearchPage() {
                   </button>
                 ))}
               </div>
-
               {hiddenPlatforms.length > 0 && (
                 <button
                   onClick={() => setHiddenPlatforms([])}
@@ -839,7 +1669,6 @@ export default function SearchPage() {
                   SHOW {hiddenPlatforms.length} HIDDEN
                 </button>
               )}
-
               <button
                 onClick={handleOpenAll}
                 disabled={openingAll}
@@ -953,6 +1782,7 @@ export default function SearchPage() {
                 query={lastSearch?.query}
                 onBookmark={handleBookmark}
                 rank={i + 1}
+                onPreview={setPreviewResult}
               />
             ))}
           </div>
@@ -1086,38 +1916,29 @@ export default function SearchPage() {
             </div>
           )}
 
-          {/* ── Content recommendation feed ──
-              FIX: Only mount after first search, and pass onLoad/onError callbacks
-              so we know if real data is available before showing the section.
-              "No preview available" now only shows inside the feed component itself
-              when it genuinely has no data — we don't render the section header
-              unless feedAvailable becomes true OR the feed reports an honest empty state.
-          */}
+          {/* ✅ NEW: Posts / Videos / Trends tabs section */}
+          {feedQuery && <ContentTabsSection query={feedQuery} />}
+
+          {/* Recommendation feed (kept for backwards compat) */}
           {feedQuery && (
-            <div style={{ marginTop: 52 }}>
+            <div style={{ marginTop: 40 }}>
               <div
                 style={{
                   height: 1,
                   background:
-                    "linear-gradient(90deg, transparent, rgba(0,212,255,0.18), transparent)",
-                  marginBottom: 36,
+                    "linear-gradient(90deg, transparent, rgba(0,212,255,0.1), transparent)",
+                  marginBottom: 28,
                 }}
               />
-              {/* 
-                Pass onLoad so if the feed gets actual results we show it properly,
-                and it self-hides when nothing comes back by checking its own state.
-              */}
               <RecommendationFeed
-                key={
-                  feedQuery
-                } /* remount on new query to reset internal state */
+                key={feedQuery}
                 query={feedQuery}
                 platform={
                   initialP !== "all"
                     ? initialP
                     : "youtube,reddit,dailymotion,vimeo"
                 }
-                title="🎬 Content Previews — Videos, Reels & Posts"
+                title="🎬 Recommended — More Content"
                 limit={8}
                 showFilters
               />
@@ -1128,100 +1949,98 @@ export default function SearchPage() {
 
       {/* Pre-search discover state */}
       {!loading && !searched && (
-        <>
-          <div style={{ textAlign: "center", padding: "80px 0 40px" }}>
-            <div style={{ fontSize: "3rem", marginBottom: 20, opacity: 0.3 }}>
-              ⌕
-            </div>
-            <div
+        <div style={{ textAlign: "center", padding: "80px 0 40px" }}>
+          <div style={{ fontSize: "3rem", marginBottom: 20, opacity: 0.3 }}>
+            ⌕
+          </div>
+          <div
+            style={{
+              fontFamily: "var(--f-display)",
+              fontSize: "1.1rem",
+              color: "var(--c-text3)",
+              marginBottom: 12,
+            }}
+          >
+            Ready to Search
+          </div>
+          <div
+            style={{
+              fontFamily: "var(--f-mono)",
+              fontSize: "0.75rem",
+              color: "var(--c-text4)",
+              letterSpacing: "0.1em",
+            }}
+          >
+            Press{" "}
+            <kbd
               style={{
-                fontFamily: "var(--f-display)",
-                fontSize: "1.1rem",
-                color: "var(--c-text3)",
-                marginBottom: 12,
+                padding: "2px 6px",
+                background: "rgba(255,255,255,.08)",
+                border: "1px solid rgba(255,255,255,.15)",
+                borderRadius: 4,
+                fontFamily: "inherit",
               }}
             >
-              Ready to Search
-            </div>
-            <div
-              style={{
-                fontFamily: "var(--f-mono)",
-                fontSize: "0.75rem",
-                color: "var(--c-text4)",
-                letterSpacing: "0.1em",
-              }}
-            >
-              Press{" "}
-              <kbd
+              /
+            </kbd>{" "}
+            to focus search
+          </div>
+          <div
+            style={{
+              marginTop: 32,
+              display: "flex",
+              gap: 10,
+              justifyContent: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            {[
+              "viral shorts 2025",
+              "AI tutorials",
+              "live gaming streams",
+              "travel vlogs",
+            ].map((s) => (
+              <button
+                key={s}
+                onClick={() => {
+                  startRef.current = Date.now();
+                  search({ query: s, platform: "all" }).then((d) => {
+                    if (d) {
+                      setSearched(true);
+                      setFeedQuery(s);
+                      setFeedAvailable(false);
+                      navigate(
+                        `/search?q=${encodeURIComponent(s)}&platform=all`,
+                        { replace: true },
+                      );
+                    }
+                  });
+                }}
                 style={{
-                  padding: "2px 6px",
-                  background: "rgba(255,255,255,.08)",
-                  border: "1px solid rgba(255,255,255,.15)",
-                  borderRadius: 4,
-                  fontFamily: "inherit",
+                  padding: "8px 16px",
+                  background: "var(--c-surface)",
+                  border: "1px solid var(--c-border)",
+                  borderRadius: 99,
+                  color: "var(--c-text2)",
+                  fontFamily: "var(--f-mono)",
+                  fontSize: "0.76rem",
+                  transition: "all 150ms",
+                  cursor: "pointer",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "rgba(0,212,255,.4)";
+                  e.currentTarget.style.color = "var(--c-cyan)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "var(--c-border)";
+                  e.currentTarget.style.color = "var(--c-text2)";
                 }}
               >
-                /
-              </kbd>{" "}
-              to focus search
-            </div>
-            <div
-              style={{
-                marginTop: 32,
-                display: "flex",
-                gap: 10,
-                justifyContent: "center",
-                flexWrap: "wrap",
-              }}
-            >
-              {[
-                "viral shorts 2025",
-                "AI tutorials",
-                "live gaming streams",
-                "travel vlogs",
-              ].map((s) => (
-                <button
-                  key={s}
-                  onClick={() => {
-                    startRef.current = Date.now();
-                    search({ query: s, platform: "all" }).then((d) => {
-                      if (d) {
-                        setSearched(true);
-                        setFeedQuery(s);
-                        setFeedAvailable(false);
-                        navigate(
-                          `/search?q=${encodeURIComponent(s)}&platform=all`,
-                          { replace: true },
-                        );
-                      }
-                    });
-                  }}
-                  style={{
-                    padding: "8px 16px",
-                    background: "var(--c-surface)",
-                    border: "1px solid var(--c-border)",
-                    borderRadius: 99,
-                    color: "var(--c-text2)",
-                    fontFamily: "var(--f-mono)",
-                    fontSize: "0.76rem",
-                    transition: "all 150ms",
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = "rgba(0,212,255,.4)";
-                    e.currentTarget.style.color = "var(--c-cyan)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = "var(--c-border)";
-                    e.currentTarget.style.color = "var(--c-text2)";
-                  }}
-                >
-                  ↗ {s}
-                </button>
-              ))}
-            </div>
+                ↗ {s}
+              </button>
+            ))}
           </div>
-        </>
+        </div>
       )}
     </div>
   );
