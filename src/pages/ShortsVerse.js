@@ -1,24 +1,34 @@
 /**
  * ShortsVerse.js  ─  frontend/src/pages/ShortsVerse.js
  *
- * ARCHITECTURE
- * ────────────
- * Every card plays a real YouTube video iframe — 100% reliable embeds.
- * Each card is skinned to look like its platform (TikTok dark theme,
- * Instagram gradient, Facebook blue, Snapchat yellow, YouTube red).
- * The "Open on [Platform]" button deep-links to the real platform search.
+ * FIXES applied (v4 — infinite scroll rewrite):
  *
- * POOLS
- * ─────
- * 5 themed pools of YouTube video IDs, one per platform style:
- *   YT_POOL  — music/viral/trending (YouTube Shorts skin)
- *   TT_POOL  — dance/challenge/viral (TikTok skin)
- *   IG_POOL  — lifestyle/travel/food (Instagram Reels skin)
- *   FB_POOL  — family/community/DIY (Facebook Reels skin)
- *   SC_POOL  — sports/nature/cinematic (Snapchat Spotlight skin)
+ * 1. REPEATING VIDEOS: Removed the module-level `globalSeenYtIds` Set that
+ *    permanently blocked every fetched ID from ever re-entering the feed.
+ *    Now uses a rolling window of the last N seen IDs so that after the pool
+ *    cycles, videos can re-appear naturally (just like YouTube Shorts).
  *
- * Anti-repeat: module-level pools shuffle on exhaustion (double-shuffle
- * guarantees different order). 25+ videos per pool = very little repetition.
+ * 2. POOL NOT GROWING / LOAD-MORE STALLING: `fetchShortsPage` now adds new
+ *    items directly to `dynamicPool` AND returns them so `loadMore` can
+ *    immediately call `buildBatch` from the enlarged pool.
+ *
+ * 3. LOAD-MORE NEVER TRIGGERING AFTER POOL EXHAUSTED: `loadMore` now always
+ *    fetches from the API first, then builds the next batch from the pool.
+ *    The old code returned early if `items.length === 0` which killed scroll.
+ *
+ * 4. SAME VIDEOS RECYCLED FOREVER: `buildBatch` now accepts a `feedSeenIds`
+ *    set (slides already in the feed) and will skip those first, only falling
+ *    back to them when the pool is truly exhausted — enabling a genuinely
+ *    infinite stream even with a bounded video pool.
+ *
+ * 5. QUERY DIVERSITY: Doubled the SHORTS_QUERIES pool and added category-aware
+ *    queries so each `loadMore` call fetches from different topics.
+ *
+ * 6. NO-MORE FLAG RESETS: `noMore` resets whenever a category or filter
+ *    changes so the feed doesn't lock up after one exhaustion event.
+ *
+ * 7. FETCH-GUARD TIMEOUT: Added a 15-second safety timeout on
+ *    `fetchingRemoteRef` so a stalled fetch never permanently blocks loadMore.
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -26,1187 +36,717 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VIDEO POOLS — all real YouTube IDs, grouped by platform theme
+// SEED POOL — shown immediately while first API fetch loads
 // ─────────────────────────────────────────────────────────────────────────────
-
-// YouTube Shorts skin — music, viral, pop culture
-const YT_POOL = [
-  {
-    ytId: "jNQXAC9IVRw",
-    title: "First Ever YouTube Video",
-    creator: "@jawed",
-    cat: "History",
-  },
+const SEED_VIDEOS = [
   {
     ytId: "9bZkp7q19f0",
-    title: "Gangnam Style — PSY",
-    creator: "@officialpsy",
+    title: "Gangnam Style",
+    creator: "@PSY",
     cat: "Music",
   },
   {
-    ytId: "kffacxfA7G4",
-    title: "Baby Shark Dance",
-    creator: "@pinkfong",
-    cat: "Kids",
+    ytId: "JGwWNGJdvx8",
+    title: "Shape of You",
+    creator: "@EdSheeranVEVO",
+    cat: "Music",
   },
   {
-    ytId: "JGwWNGJdvx8",
-    title: "Shape of You — Ed Sheeran",
-    creator: "@edsheeran",
+    ytId: "H5v3kku4y6Q",
+    title: "Blinding Lights",
+    creator: "@TheWeekndVEVO",
     cat: "Music",
   },
   {
     ytId: "OPf0YbXqDm0",
-    title: "Uptown Funk — Mark Ronson ft Bruno Mars",
-    creator: "@markronson",
+    title: "Uptown Funk",
+    creator: "@MarkRonsonVEVO",
     cat: "Music",
   },
   {
-    ytId: "YQHsXMglC9A",
-    title: "Hello — Adele",
-    creator: "@adele",
-    cat: "Music",
-  },
-  {
-    ytId: "RgKAFK5djSk",
-    title: "See You Again — Wiz Khalifa",
-    creator: "@wizkhalifa",
-    cat: "Music",
-  },
-  {
-    ytId: "dQw4w9WgXcQ",
-    title: "Never Gonna Give You Up — Rick Astley",
-    creator: "@rickastley",
-    cat: "Comedy",
-  },
-  {
-    ytId: "CevxZvSJLk8",
-    title: "Roar — Katy Perry",
-    creator: "@katyperry",
-    cat: "Music",
-  },
-  {
-    ytId: "iS1g8G_njx8",
-    title: "The Scientist — Coldplay",
-    creator: "@coldplay",
-    cat: "Music",
-  },
-  {
-    ytId: "IcrbM1l_BoI",
-    title: "Wake Me Up — Avicii",
-    creator: "@avicii",
-    cat: "Music",
-  },
-  {
-    ytId: "H5v3kku4y6Q",
-    title: "Blinding Lights — The Weeknd",
-    creator: "@theweeknd",
+    ytId: "7wtfhZwyrcc",
+    title: "Levitating",
+    creator: "@DuaLipaVEVO",
     cat: "Music",
   },
   {
     ytId: "hT_nvWreIhg",
-    title: "Counting Stars — OneRepublic",
-    creator: "@onerepublic",
+    title: "Counting Stars",
+    creator: "@OneRepublicVEVO",
+    cat: "Music",
+  },
+  { ytId: "60ItHLz5WEA", title: "Faded", creator: "@AlanWalker", cat: "Music" },
+  {
+    ytId: "nfWlot6h_JM",
+    title: "Shake It Off",
+    creator: "@TaylorSwiftVEVO",
     cat: "Music",
   },
   {
-    ytId: "kXYiU_JCYtU",
-    title: "Numb — Linkin Park",
-    creator: "@linkinpark",
+    ytId: "DjMkejsIFGQ",
+    title: "Anti-Hero",
+    creator: "@TaylorSwiftVEVO",
+    cat: "Music",
+  },
+  {
+    ytId: "nGBHQDMX3KE",
+    title: "Heat Waves",
+    creator: "@GlassAnimals",
+    cat: "Music",
+  },
+  {
+    ytId: "KEI4qSrkPAs",
+    title: "Can't Stop the Feeling",
+    creator: "@JTimberlakeVEVO",
+    cat: "Music",
+  },
+  {
+    ytId: "WpYeekQkAdc",
+    title: "Happier",
+    creator: "@Marshmello",
     cat: "Music",
   },
   {
     ytId: "09R8_2nJtjg",
-    title: "Sugar — Maroon 5",
-    creator: "@maroon5",
-    cat: "Music",
-  },
-  {
-    ytId: "7wtfhZwyrcc",
-    title: "Levitating — Dua Lipa",
-    creator: "@dualipa",
-    cat: "Music",
-  },
-  {
-    ytId: "uelHwf8o7_U",
-    title: "Stay — Kid Laroi & Justin Bieber",
-    creator: "@kidlaroi",
-    cat: "Music",
-  },
-  {
-    ytId: "72UO0y_SHws",
-    title: "Astronaut in the Ocean — Masked Wolf",
-    creator: "@maskedwolf",
-    cat: "Music",
-  },
-  {
-    ytId: "SlPhMPnQ58k",
-    title: "Thinking Out Loud — Ed Sheeran",
-    creator: "@edsheeran",
-    cat: "Music",
-  },
-  {
-    ytId: "2Vv-BfVoq4g",
-    title: "Perfect — Ed Sheeran",
-    creator: "@edsheeran",
+    title: "Sugar",
+    creator: "@Maroon5VEVO",
     cat: "Music",
   },
   {
     ytId: "bo_efYLyVmo",
-    title: "Watermelon Sugar — Harry Styles",
-    creator: "@harrystyles",
+    title: "Watermelon Sugar",
+    creator: "@HarryStylesVEVO",
     cat: "Music",
   },
   {
-    ytId: "60ItHLz5WEA",
-    title: "Faded — Alan Walker",
-    creator: "@alanwalker",
+    ytId: "h--P8HzYZ8I",
+    title: "Flowers",
+    creator: "@MileyCyrusVEVO",
     cat: "Music",
-  },
-  {
-    ytId: "e-ORhEE9VVg",
-    title: "Girl on Fire — Alicia Keys",
-    creator: "@aliciakeys",
-    cat: "Music",
-  },
-  {
-    ytId: "OkGOOmv_Hjo",
-    title: "God is a Woman — Ariana Grande",
-    creator: "@arianagrande",
-    cat: "Music",
-  },
-  {
-    ytId: "lp-EO5I60KA",
-    title: "Without Me — Eminem",
-    creator: "@eminem",
-    cat: "Music",
-  },
-  {
-    ytId: "ru0K8uYEZWw",
-    title: "Fight Song — Rachel Platten",
-    creator: "@rachelplatten",
-    cat: "Music",
-  },
-  {
-    ytId: "pRpeEdMmmQ0",
-    title: "Waka Waka — Shakira",
-    creator: "@shakira",
-    cat: "Sports",
-  },
-  {
-    ytId: "fRh_vgS2dFE",
-    title: "Sorry — Justin Bieber",
-    creator: "@justinbieber",
-    cat: "Music",
-  },
-  {
-    ytId: "nfWlot6h_JM",
-    title: "Shake It Off — Taylor Swift",
-    creator: "@taylorswift",
-    cat: "Music",
-  },
-  {
-    ytId: "tgbNymZ7vqY",
-    title: "Surf Beginner Tips",
-    creator: "@surftips",
-    cat: "Sports",
   },
 ];
 
-// TikTok skin — dance, challenge, viral, trending
-const TT_POOL = [
-  {
-    ytId: "OPf0YbXqDm0",
-    title: "Uptown Funk Challenge",
-    creator: "@markronson",
-    cat: "Dance",
-    query: "dance challenge trending",
-  },
-  {
-    ytId: "nfWlot6h_JM",
-    title: "Shake It Off Dance",
-    creator: "@taylorswift",
-    cat: "Challenge",
-    query: "shake it off challenge",
-  },
-  {
-    ytId: "CevxZvSJLk8",
-    title: "Roar Dance Cover",
-    creator: "@katyperry",
-    cat: "Dance",
-    query: "roar dance challenge",
-  },
-  {
-    ytId: "H5v3kku4y6Q",
-    title: "Blinding Lights Dance",
-    creator: "@theweeknd",
-    cat: "Viral",
-    query: "blinding lights tiktok",
-  },
-  {
-    ytId: "7wtfhZwyrcc",
-    title: "Levitating Dance Trend",
-    creator: "@dualipa",
-    cat: "Dance",
-    query: "levitating dance trend",
-  },
-  {
-    ytId: "uelHwf8o7_U",
-    title: "Stay Trending Audio",
-    creator: "@kidlaroi",
-    cat: "Trending",
-    query: "stay tiktok trend",
-  },
-  {
-    ytId: "09R8_2nJtjg",
-    title: "Sugar Music Challenge",
-    creator: "@maroon5",
-    cat: "Music",
-    query: "sugar challenge tiktok",
-  },
-  {
-    ytId: "kXYiU_JCYtU",
-    title: "Numb Viral Edit",
-    creator: "@linkinpark",
-    cat: "Viral",
-    query: "numb viral edit",
-  },
-  {
-    ytId: "hT_nvWreIhg",
-    title: "Counting Stars Trend",
-    creator: "@onerepublic",
-    cat: "Trending",
-    query: "counting stars tiktok",
-  },
-  {
-    ytId: "IcrbM1l_BoI",
-    title: "Wake Me Up Dance",
-    creator: "@avicii",
-    cat: "Dance",
-    query: "wake me up dance tiktok",
-  },
-  {
-    ytId: "60ItHLz5WEA",
-    title: "Faded Edit Trend",
-    creator: "@alanwalker",
-    cat: "Viral",
-    query: "faded alan walker tiktok",
-  },
-  {
-    ytId: "dQw4w9WgXcQ",
-    title: "Never Gonna Rickroll",
-    creator: "@rickastley",
-    cat: "Comedy",
-    query: "rickroll funny tiktok",
-  },
-  {
-    ytId: "bo_efYLyVmo",
-    title: "Watermelon Sugar Challenge",
-    creator: "@harrystyles",
-    cat: "Challenge",
-    query: "watermelon sugar tiktok",
-  },
-  {
-    ytId: "72UO0y_SHws",
-    title: "Astronaut in the Ocean Dance",
-    creator: "@maskedwolf",
-    cat: "Dance",
-    query: "astronaut ocean dance",
-  },
-  {
-    ytId: "JGwWNGJdvx8",
-    title: "Shape of You Dance Edit",
-    creator: "@edsheeran",
-    cat: "Dance",
-    query: "shape of you dance tiktok",
-  },
-  {
-    ytId: "OkGOOmv_Hjo",
-    title: "God is a Woman Trend",
-    creator: "@arianagrande",
-    cat: "Trending",
-    query: "ariana grande tiktok",
-  },
-  {
-    ytId: "RgKAFK5djSk",
-    title: "See You Again Sad Edit",
-    creator: "@wizkhalifa",
-    cat: "Viral",
-    query: "see you again sad edit",
-  },
-  {
-    ytId: "YQHsXMglC9A",
-    title: "Hello Challenge",
-    creator: "@adele",
-    cat: "Challenge",
-    query: "hello adele challenge",
-  },
-  {
-    ytId: "ru0K8uYEZWw",
-    title: "Fight Song Motivation",
-    creator: "@rachelplatten",
-    cat: "Motivation",
-    query: "fight song motivational",
-  },
-  {
-    ytId: "e-ORhEE9VVg",
-    title: "Girl on Fire Viral",
-    creator: "@aliciakeys",
-    cat: "Viral",
-    query: "girl on fire tiktok",
-  },
-  {
-    ytId: "lp-EO5I60KA",
-    title: "Without Me Rap Edit",
-    creator: "@eminem",
-    cat: "Rap",
-    query: "eminem rap tiktok",
-  },
-  {
-    ytId: "SlPhMPnQ58k",
-    title: "Thinking Out Loud Duet",
-    creator: "@edsheeran",
-    cat: "Duet",
-    query: "thinking out loud tiktok",
-  },
-  {
-    ytId: "2Vv-BfVoq4g",
-    title: "Perfect Duet Trend",
-    creator: "@edsheeran",
-    cat: "Duet",
-    query: "perfect ed sheeran duet",
-  },
-  {
-    ytId: "pRpeEdMmmQ0",
-    title: "Waka Waka Sports Edit",
-    creator: "@shakira",
-    cat: "Sports",
-    query: "waka waka sports tiktok",
-  },
-  {
-    ytId: "fRh_vgS2dFE",
-    title: "Sorry Dance Challenge",
-    creator: "@justinbieber",
-    cat: "Challenge",
-    query: "sorry bieber dance",
-  },
-];
-
-// Instagram Reels skin — lifestyle, food, travel, aesthetic
-const IG_POOL = [
-  {
-    ytId: "tgbNymZ7vqY",
-    title: "Golden Hour Surf Session",
-    creator: "@surf.daily",
-    cat: "Lifestyle",
-    query: "golden hour surf reels",
-  },
-  {
-    ytId: "iS1g8G_njx8",
-    title: "Aesthetic Chill Vibes",
-    creator: "@coldplay",
-    cat: "Aesthetic",
-    query: "aesthetic chill vibes",
-  },
-  {
-    ytId: "JGwWNGJdvx8",
-    title: "Shape of You Travel Reel",
-    creator: "@travel.reels",
-    cat: "Travel",
-    query: "travel reel music",
-  },
-  {
-    ytId: "7wtfhZwyrcc",
-    title: "Morning Routine Aesthetic",
-    creator: "@morningvibes",
-    cat: "Lifestyle",
-    query: "morning routine aesthetic",
-  },
-  {
-    ytId: "YQHsXMglC9A",
-    title: "Rainy Day Cozy Reel",
-    creator: "@cozyliving",
-    cat: "Lifestyle",
-    query: "rainy day cozy reels",
-  },
-  {
-    ytId: "bo_efYLyVmo",
-    title: "Summer Beach Reel",
-    creator: "@beachlife",
-    cat: "Travel",
-    query: "summer beach instagram reel",
-  },
-  {
-    ytId: "hT_nvWreIhg",
-    title: "City Night Lights Reel",
-    creator: "@cityvibes",
-    cat: "Urban",
-    query: "city night lights reels",
-  },
-  {
-    ytId: "2Vv-BfVoq4g",
-    title: "Wedding Reel Highlight",
-    creator: "@weddingfilms",
-    cat: "Wedding",
-    query: "wedding highlight reel",
-  },
-  {
-    ytId: "H5v3kku4y6Q",
-    title: "Gym Aesthetic Reel",
-    creator: "@fitaesthetic",
-    cat: "Fitness",
-    query: "gym aesthetic reel",
-  },
-  {
-    ytId: "IcrbM1l_BoI",
-    title: "Festival Vibe Reel",
-    creator: "@festivalvibes",
-    cat: "Music",
-    query: "festival vibe reel",
-  },
-  {
-    ytId: "60ItHLz5WEA",
-    title: "Road Trip Reel",
-    creator: "@roadtrippers",
-    cat: "Travel",
-    query: "road trip reel aesthetic",
-  },
-  {
-    ytId: "CevxZvSJLk8",
-    title: "Food Aesthetic Reel",
-    creator: "@foodie.reels",
-    cat: "Food",
-    query: "food aesthetic reel",
-  },
-  {
-    ytId: "uelHwf8o7_U",
-    title: "Couple Goals Reel",
-    creator: "@couplegoals",
-    cat: "Romance",
-    query: "couple goals reel",
-  },
-  {
-    ytId: "09R8_2nJtjg",
-    title: "Sunset Drive Reel",
-    creator: "@sunsetdrives",
-    cat: "Travel",
-    query: "sunset drive reel",
-  },
-  {
-    ytId: "OkGOOmv_Hjo",
-    title: "Fashion Look Book Reel",
-    creator: "@fashionreels",
-    cat: "Fashion",
-    query: "fashion lookbook reel",
-  },
-  {
-    ytId: "nfWlot6h_JM",
-    title: "Cafe Hopping Reel",
-    creator: "@cafehoppers",
-    cat: "Food",
-    query: "cafe hopping reel",
-  },
-  {
-    ytId: "kXYiU_JCYtU",
-    title: "Night Out Reel",
-    creator: "@nightout.vibes",
-    cat: "Lifestyle",
-    query: "night out reel aesthetic",
-  },
-  {
-    ytId: "RgKAFK5djSk",
-    title: "Tribute Reel — Feel Good",
-    creator: "@feelgoodclips",
-    cat: "Lifestyle",
-    query: "feel good tribute reel",
-  },
-  {
-    ytId: "dQw4w9WgXcQ",
-    title: "Throwback Aesthetic Reel",
-    creator: "@throwbackreels",
-    cat: "Nostalgic",
-    query: "throwback aesthetic reel",
-  },
-  {
-    ytId: "72UO0y_SHws",
-    title: "Hiking Adventure Reel",
-    creator: "@hikingadventure",
-    cat: "Nature",
-    query: "hiking adventure reel",
-  },
-  {
-    ytId: "SlPhMPnQ58k",
-    title: "Golden Hour Portrait Reel",
-    creator: "@portraitfilms",
-    cat: "Photography",
-    query: "golden hour portrait reel",
-  },
-  {
-    ytId: "e-ORhEE9VVg",
-    title: "Empowerment Reel",
-    creator: "@empowerreels",
-    cat: "Motivation",
-    query: "empowerment women reel",
-  },
-  {
-    ytId: "ru0K8uYEZWw",
-    title: "Workout Glow Up Reel",
-    creator: "@glowupreels",
-    cat: "Fitness",
-    query: "workout glow up reel",
-  },
-  {
-    ytId: "pRpeEdMmmQ0",
-    title: "Sports Highlights Reel",
-    creator: "@sportsreels",
-    cat: "Sports",
-    query: "sports highlight reel",
-  },
-  {
-    ytId: "fRh_vgS2dFE",
-    title: "Summer Glow Reel",
-    creator: "@summerglow",
-    cat: "Lifestyle",
-    query: "summer glow reel",
-  },
-];
-
-// Facebook Reels skin — family, community, feel-good, DIY
-const FB_POOL = [
-  {
-    ytId: "9bZkp7q19f0",
-    title: "Kids Dance Party",
-    creator: "@familyfun",
-    cat: "Family",
-    query: "kids dance party fun",
-  },
-  {
-    ytId: "kffacxfA7G4",
-    title: "Grandkids First Dance",
-    creator: "@grandparent",
-    cat: "Family",
-    query: "grandkids wholesome moments",
-  },
-  {
-    ytId: "pRpeEdMmmQ0",
-    title: "Community Soccer Highlights",
-    creator: "@communityfc",
-    cat: "Sports",
-    query: "community soccer highlights",
-  },
-  {
-    ytId: "YQHsXMglC9A",
-    title: "Wedding Surprise Moment",
-    creator: "@weddingmoments",
-    cat: "Weddings",
-    query: "wedding surprise emotional",
-  },
-  {
-    ytId: "RgKAFK5djSk",
-    title: "Tribute to Friends — Friendship Goals",
-    creator: "@friendsforever",
-    cat: "Friendship",
-    query: "friendship tribute feel good",
-  },
-  {
-    ytId: "2Vv-BfVoq4g",
-    title: "Perfect Proposal Video",
-    creator: "@romanticmoments",
-    cat: "Romance",
-    query: "marriage proposal perfect",
-  },
-  {
-    ytId: "SlPhMPnQ58k",
-    title: "Cooking Together — Family Recipes",
-    creator: "@homecooking",
-    cat: "Food",
-    query: "family cooking recipes",
-  },
-  {
-    ytId: "iS1g8G_njx8",
-    title: "Backyard Garden Makeover",
-    creator: "@gardeningwithus",
-    cat: "DIY",
-    query: "backyard garden makeover",
-  },
-  {
-    ytId: "hT_nvWreIhg",
-    title: "Youth Team Training Day",
-    creator: "@youthcoach",
-    cat: "Sports",
-    query: "youth sports training day",
-  },
-  {
-    ytId: "ru0K8uYEZWw",
-    title: "Neighbourhood Cleanup Drive",
-    creator: "@communityheroes",
-    cat: "Community",
-    query: "neighbourhood cleanup drive",
-  },
-  {
-    ytId: "e-ORhEE9VVg",
-    title: "Empowering Women — Local Stories",
-    creator: "@localheroes",
-    cat: "Community",
-    query: "women empowerment community",
-  },
-  {
-    ytId: "60ItHLz5WEA",
-    title: "Road Trip with the Family",
-    creator: "@familyroads",
-    cat: "Travel",
-    query: "family road trip moments",
-  },
-  {
-    ytId: "tgbNymZ7vqY",
-    title: "Beach Day with Kids",
-    creator: "@beachfamily",
-    cat: "Family",
-    query: "beach day kids family fun",
-  },
-  {
-    ytId: "IcrbM1l_BoI",
-    title: "Festival Day Out — Community Fair",
-    creator: "@communityfair",
-    cat: "Community",
-    query: "community festival fair",
-  },
-  {
-    ytId: "OkGOOmv_Hjo",
-    title: "Local Talent Show Highlights",
-    creator: "@localtalent",
-    cat: "Entertainment",
-    query: "local talent show community",
-  },
-  {
-    ytId: "bo_efYLyVmo",
-    title: "Summer BBQ Party Moments",
-    creator: "@bbqparty",
-    cat: "Food",
-    query: "summer bbq party fun",
-  },
-  {
-    ytId: "uelHwf8o7_U",
-    title: "Friends Reunion Video",
-    creator: "@reunionvibes",
-    cat: "Friendship",
-    query: "friends reunion emotional",
-  },
-  {
-    ytId: "fRh_vgS2dFE",
-    title: "Baby's First Steps",
-    creator: "@babymilestones",
-    cat: "Family",
-    query: "baby first steps milestone",
-  },
-  {
-    ytId: "nfWlot6h_JM",
-    title: "Grandmother Dancing Goes Viral",
-    creator: "@wholesomeclips",
-    cat: "Wholesome",
-    query: "grandmother dancing viral",
-  },
-  {
-    ytId: "lp-EO5I60KA",
-    title: "Father Son Bonding Moments",
-    creator: "@dadlife",
-    cat: "Family",
-    query: "father son bonding moments",
-  },
-  {
-    ytId: "72UO0y_SHws",
-    title: "Hiking with the Crew",
-    creator: "@hikingcrew",
-    cat: "Outdoors",
-    query: "hiking group friends fun",
-  },
-  {
-    ytId: "dQw4w9WgXcQ",
-    title: "Surprise Birthday Party",
-    creator: "@birthdayclips",
-    cat: "Celebrations",
-    query: "surprise birthday party",
-  },
-  {
-    ytId: "kXYiU_JCYtU",
-    title: "School Play Performance",
-    creator: "@schoolplay",
-    cat: "Education",
-    query: "school play performance",
-  },
-  {
-    ytId: "7wtfhZwyrcc",
-    title: "Dog Tricks Going Viral",
-    creator: "@dogtrainer",
-    cat: "Pets",
-    query: "dog tricks viral video",
-  },
-  {
-    ytId: "09R8_2nJtjg",
-    title: "Sweet Surprise for Parents",
-    creator: "@familylove",
-    cat: "Family",
-    query: "sweet surprise parents",
-  },
-];
-
-// Snapchat Spotlight skin — sports, nature, extreme, cinematic
-const SC_POOL = [
-  {
-    ytId: "tgbNymZ7vqY",
-    title: "Surf Session at Golden Hour",
-    creator: "@surfculture",
-    cat: "Surf",
-    query: "surf golden hour spotlight",
-  },
-  {
-    ytId: "9bZkp7q19f0",
-    title: "Skate Park Edit",
-    creator: "@skateclips",
-    cat: "Skate",
-    query: "skate park edit viral",
-  },
-  {
-    ytId: "kffacxfA7G4",
-    title: "Cute Moments Compilation",
-    creator: "@cutecompilation",
-    cat: "Wholesome",
-    query: "cute moments compilation",
-  },
-  {
-    ytId: "60ItHLz5WEA",
-    title: "Mountain Bike Trails Edit",
-    creator: "@mtbculture",
-    cat: "MTB",
-    query: "mountain bike trail edit",
-  },
-  {
-    ytId: "IcrbM1l_BoI",
-    title: "Festival Music Clip",
-    creator: "@livemusic",
-    cat: "Music",
-    query: "festival music outdoor",
-  },
-  {
-    ytId: "hT_nvWreIhg",
-    title: "Stargazing Time-Lapse",
-    creator: "@nightsky",
-    cat: "Nature",
-    query: "stargazing time lapse",
-  },
-  {
-    ytId: "H5v3kku4y6Q",
-    title: "Gym Beast Mode Edit",
-    creator: "@gymrats",
-    cat: "Fitness",
-    query: "gym beast mode training",
-  },
-  {
-    ytId: "iS1g8G_njx8",
-    title: "Cinematic Sunrise Hike",
-    creator: "@hikingcinema",
-    cat: "Nature",
-    query: "cinematic sunrise hike",
-  },
-  {
-    ytId: "2Vv-BfVoq4g",
-    title: "Drone Landscape Reel",
-    creator: "@droneshots",
-    cat: "Aerial",
-    query: "drone landscape cinematic",
-  },
-  {
-    ytId: "7wtfhZwyrcc",
-    title: "Levitating Dance Gym Edit",
-    creator: "@gymdance",
-    cat: "Dance",
-    query: "gym dance edit spotlight",
-  },
-  {
-    ytId: "kXYiU_JCYtU",
-    title: "Parkour City Run",
-    creator: "@parkourlife",
-    cat: "Extreme",
-    query: "parkour city freerun",
-  },
-  {
-    ytId: "OkGOOmv_Hjo",
-    title: "Night City Cinematic Walk",
-    creator: "@cinemastreet",
-    cat: "Urban",
-    query: "night city cinematic walk",
-  },
-  {
-    ytId: "uelHwf8o7_U",
-    title: "Stay Chill Outdoor Edit",
-    creator: "@outdoorvibes",
-    cat: "Outdoors",
-    query: "chill outdoor nature edit",
-  },
-  {
-    ytId: "SlPhMPnQ58k",
-    title: "Long Board Sunset Cruise",
-    creator: "@longboardlife",
-    cat: "Skate",
-    query: "longboard sunset cruise",
-  },
-  {
-    ytId: "JGwWNGJdvx8",
-    title: "Kayaking Adventure Clip",
-    creator: "@kayaklife",
-    cat: "Water",
-    query: "kayaking adventure water",
-  },
-  {
-    ytId: "dQw4w9WgXcQ",
-    title: "Epic Fail Compilation",
-    creator: "@failclips",
-    cat: "Comedy",
-    query: "epic fail compilation snap",
-  },
-  {
-    ytId: "CevxZvSJLk8",
-    title: "Waterfall Hike Edit",
-    creator: "@waterfalltrails",
-    cat: "Nature",
-    query: "waterfall hike nature edit",
-  },
-  {
-    ytId: "bo_efYLyVmo",
-    title: "Camping Fire Night Reel",
-    creator: "@campfire.edits",
-    cat: "Camping",
-    query: "camping fire night reel",
-  },
-  {
-    ytId: "ru0K8uYEZWw",
-    title: "Fight Night Training Clip",
-    creator: "@fighttraining",
-    cat: "Boxing",
-    query: "boxing training fight clip",
-  },
-  {
-    ytId: "lp-EO5I60KA",
-    title: "Rap Battle Street Clip",
-    creator: "@streetculture",
-    cat: "Hip-Hop",
-    query: "rap battle street hip hop",
-  },
-  {
-    ytId: "e-ORhEE9VVg",
-    title: "Yoga at Sunrise",
-    creator: "@sunriseyoga",
-    cat: "Yoga",
-    query: "sunrise yoga outdoor",
-  },
-  {
-    ytId: "pRpeEdMmmQ0",
-    title: "Soccer Tricks Street Edit",
-    creator: "@streetfootball",
-    cat: "Soccer",
-    query: "soccer street tricks edit",
-  },
-  {
-    ytId: "nfWlot6h_JM",
-    title: "Snow Day Snowboard Edit",
-    creator: "@snowboardlife",
-    cat: "Snow",
-    query: "snowboard day edit",
-  },
-  {
-    ytId: "fRh_vgS2dFE",
-    title: "Street Photography Walk Edit",
-    creator: "@streetphotos",
-    cat: "Photography",
-    query: "street photography edit",
-  },
-  {
-    ytId: "YQHsXMglC9A",
-    title: "Acoustic Rooftop Session",
-    creator: "@rooftopmusic",
-    cat: "Music",
-    query: "rooftop acoustic session",
-  },
-];
+// Module-level pool — grows as we fetch from the API.
+// We use a Map keyed by ytId to avoid true duplicates in the pool itself.
+const dynamicPoolMap = new Map(SEED_VIDEOS.map((v) => [v.ytId, v]));
+const getDynamicPool = () => Array.from(dynamicPoolMap.values());
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PLATFORM SKINS — branding applied over YouTube iframes
+// PLATFORM SKINS
 // ─────────────────────────────────────────────────────────────────────────────
 const SKINS = {
   youtube: {
-    barColor: "#FF0000",
+    barBg: "#FF0000",
+    glow: "255,0,0",
     accent: "#FF0000",
-    badgeLabel: "Shorts",
     icon: "▶",
-    followLabel: ["Subscribe", "Subscribed"],
-    followBg: ["#FF0000", "transparent"],
-    followBorder: "#FF0000",
-    followColor: ["#fff", "#FF0000"],
-    openLabel: "▶ Watch on YouTube Shorts",
-    openHref: (v) => `https://www.youtube.com/shorts/${v.ytId}`,
-    openBg: "#FF0000",
-    openColor: "#fff",
+    tag: "Shorts",
     avatarBg: "#FF0000",
+    avatarColor: "#fff",
+    subLabels: ["Subscribe", "Subscribed"],
+    subBg: ["#FF0000", "transparent"],
+    subBdr: "#FF0000",
+    subClr: ["#fff", "#FF0000"],
+    openTxt: "▶  Watch on YouTube",
+    openUrl: (v) => `https://www.youtube.com/watch?v=${v.ytId}`,
+    openBg: "#FF0000",
+    openClr: "#fff",
   },
   tiktok: {
-    barColor: "linear-gradient(90deg,#69C9D0,#EE1D52,#69C9D0)",
+    barBg: "linear-gradient(90deg,#69C9D0,#EE1D52,#69C9D0)",
+    glow: "238,29,82",
     accent: "#EE1D52",
-    badgeLabel: "TikTok",
     icon: "♪",
-    followLabel: ["Follow", "Following"],
-    followBg: ["linear-gradient(90deg,#EE1D52,#69C9D0)", "transparent"],
-    followBorder: "#EE1D52",
-    followColor: ["#fff", "#EE1D52"],
-    openLabel: "♪ Watch on TikTok",
-    openHref: (v) =>
-      `https://www.tiktok.com/search?q=${encodeURIComponent(v.query || v.title)}`,
-    openBg: "linear-gradient(90deg,#EE1D52,#69C9D0)",
-    openColor: "#fff",
+    tag: "TikTok",
     avatarBg: "linear-gradient(135deg,#69C9D0,#EE1D52)",
+    avatarColor: "#fff",
+    subLabels: ["Follow", "Following"],
+    subBg: ["linear-gradient(90deg,#EE1D52,#69C9D0)", "transparent"],
+    subBdr: "#EE1D52",
+    subClr: ["#fff", "#EE1D52"],
+    openTxt: "♪  Open TikTok",
+    openUrl: (v) =>
+      `https://www.tiktok.com/search?q=${encodeURIComponent(v.title)}`,
+    openBg: "linear-gradient(90deg,#EE1D52,#69C9D0)",
+    openClr: "#fff",
   },
   instagram: {
-    barColor: "linear-gradient(90deg,#833ab4,#fd1d1d,#fcb045)",
+    barBg: "linear-gradient(90deg,#833ab4,#fd1d1d,#fcb045)",
+    glow: "225,48,108",
     accent: "#E1306C",
-    badgeLabel: "Reels",
     icon: "◎",
-    followLabel: ["Follow", "Following"],
-    followBg: ["linear-gradient(45deg,#f09433,#dc2743,#bc1888)", "transparent"],
-    followBorder: "#dc2743",
-    followColor: ["#fff", "#dc2743"],
-    openLabel: "◎ Open Instagram Reels",
-    openHref: (v) =>
-      `https://www.instagram.com/reels/audio/?q=${encodeURIComponent(v.query || v.title)}`,
-    openBg: "linear-gradient(45deg,#f09433,#dc2743,#bc1888)",
-    openColor: "#fff",
-    avatarBg: "linear-gradient(45deg,#833ab4,#fd1d1d)",
+    tag: "Reels",
+    avatarBg: "linear-gradient(135deg,#833ab4,#fd1d1d)",
+    avatarColor: "#fff",
+    subLabels: ["Follow", "Following"],
+    subBg: ["linear-gradient(45deg,#f09433,#dc2743,#bc1888)", "transparent"],
+    subBdr: "#dc2743",
+    subClr: ["#fff", "#dc2743"],
+    openTxt: "◎  Open Instagram",
+    openUrl: (v) =>
+      `https://www.instagram.com/reels/audio/?q=${encodeURIComponent(v.title)}`,
+    openBg: "linear-gradient(90deg,#833ab4,#E1306C)",
+    openClr: "#fff",
   },
   facebook: {
-    barColor: "linear-gradient(90deg,#1877F2,#0b4f9e)",
+    barBg: "linear-gradient(90deg,#1877F2,#42a5f5)",
+    glow: "24,119,242",
     accent: "#1877F2",
-    badgeLabel: "Reels",
     icon: "f",
-    followLabel: ["+ Follow", "Following"],
-    followBg: ["#1877F2", "transparent"],
-    followBorder: "#1877F2",
-    followColor: ["#fff", "#1877F2"],
-    openLabel: "f Open Facebook Reels",
-    openHref: (v) =>
-      `https://www.facebook.com/search/videos/?q=${encodeURIComponent(v.query || v.title)}`,
+    tag: "Reels",
+    avatarBg: "linear-gradient(135deg,#1877F2,#42a5f5)",
+    avatarColor: "#fff",
+    subLabels: ["+ Follow", "Following"],
+    subBg: ["#1877F2", "transparent"],
+    subBdr: "#1877F2",
+    subClr: ["#fff", "#1877F2"],
+    openTxt: "f  Open Facebook",
+    openUrl: (v) =>
+      `https://www.facebook.com/search/videos/?q=${encodeURIComponent(v.title)}`,
     openBg: "#1877F2",
-    openColor: "#fff",
-    avatarBg: "#1877F2",
+    openClr: "#fff",
   },
   snapchat: {
-    barColor: "#FFFC00",
+    barBg: "#FFFC00",
+    glow: "255,252,0",
     accent: "#FFFC00",
-    badgeLabel: "Spotlight",
     icon: "◌",
-    followLabel: ["+ Add", "Added"],
-    followBg: ["#FFFC00", "transparent"],
-    followBorder: "#FFFC00",
-    followColor: ["#000", "#FFFC00"],
-    openLabel: "👻 Open Snapchat Spotlight",
-    openHref: () => `https://www.snapchat.com/spotlight`,
-    openBg: "#FFFC00",
-    openColor: "#000",
+    tag: "Spotlight",
     avatarBg: "#FFFC00",
+    avatarColor: "#000",
+    subLabels: ["+ Add", "Added"],
+    subBg: ["#FFFC00", "transparent"],
+    subBdr: "#FFFC00",
+    subClr: ["#000", "#FFFC00"],
+    openTxt: "👻  Snapchat Spotlight",
+    openUrl: () => `https://www.snapchat.com/spotlight`,
+    openBg: "#FFFC00",
+    openClr: "#000",
   },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PLATFORM META (sidebar + now-bar)
-// ─────────────────────────────────────────────────────────────────────────────
-const PLAT_META = {
-  youtube: { color: "#FF0000", icon: "▶" },
-  tiktok: { color: "#69C9D0", icon: "♪" },
-  instagram: { color: "#E1306C", icon: "◎" },
-  facebook: { color: "#1877F2", icon: "f" },
-  snapchat: { color: "#FFFC00", icon: "◌" },
-};
-
-const SIDEBAR_BTNS = [
-  { id: "all", icon: "⬡", color: "#a855f7" },
-  { id: "youtube", icon: "▶", color: "#FF0000" },
-  { id: "tiktok", icon: "♪", color: "#69C9D0" },
-  { id: "instagram", icon: "◎", color: "#E1306C" },
-  { id: "facebook", icon: "f", color: "#1877F2" },
-  { id: "snapchat", icon: "◌", color: "#FFFC00" },
+const SIDEBAR = [
+  { id: "all", icon: "⬡", color: "#a855f7", label: "All" },
+  { id: "youtube", icon: "▶", color: "#FF0000", label: "YouTube" },
+  { id: "tiktok", icon: "♪", color: "#EE1D52", label: "TikTok" },
+  { id: "instagram", icon: "◎", color: "#E1306C", label: "Instagram" },
+  { id: "facebook", icon: "f", color: "#1877F2", label: "Facebook" },
+  { id: "snapchat", icon: "◌", color: "#FFFC00", label: "Snapchat" },
 ];
 
 const CATS = [
   "For You",
   "Trending",
   "Music",
-  "Gaming",
+  "Dance",
   "Comedy",
   "Food",
-  "Tech",
   "Sports",
   "Travel",
   "Art",
   "Fitness",
 ];
 
+const PATTERN = [
+  "youtube",
+  "tiktok",
+  "instagram",
+  "youtube",
+  "facebook",
+  "youtube",
+  "snapchat",
+  "tiktok",
+  "instagram",
+  "youtube",
+  "facebook",
+  "youtube",
+  "snapchat",
+  "tiktok",
+  "instagram",
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
-// POOL ENGINE
+// STORAGE KEYS
 // ─────────────────────────────────────────────────────────────────────────────
-function shuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
+const PREFS_BASE_KEY = "sv_prefs_v4";
+const AVAIL_KEY = "sv_availability_v1";
+const SEEN_BASE_KEY = "sv_seen_v1";
+const SIGNALS_KEY = "sv_signals_v1";
+const AVAIL_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+const MAX_RECENT_IDS = 18;
+const MAX_RECENT_CREATORS = 8;
+const MAX_SEEN_HISTORY = 40;
+
+// Watch-time thresholds
+const SKIP_THRESHOLD_MS = 4_000;
+const GLANCE_THRESHOLD_MS = 10_000;
+const WATCH_THRESHOLD_MS = 20_000;
+const HOOKED_THRESHOLD_MS = 45_000;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+function safeParse(raw, fallback) {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed == null ? fallback : parsed;
+  } catch {
+    return fallback;
   }
-  return a;
 }
 
-const _pools = {
-  youtube: shuffle(YT_POOL.map((v) => ({ ...v, platform: "youtube" }))),
-  tiktok: shuffle(TT_POOL.map((v) => ({ ...v, platform: "tiktok" }))),
-  instagram: shuffle(IG_POOL.map((v) => ({ ...v, platform: "instagram" }))),
-  facebook: shuffle(FB_POOL.map((v) => ({ ...v, platform: "facebook" }))),
-  snapchat: shuffle(SC_POOL.map((v) => ({ ...v, platform: "snapchat" }))),
-};
-const _ptr = { youtube: 0, tiktok: 0, instagram: 0, facebook: 0, snapchat: 0 };
-
-function nextItem(pid) {
-  const pool = _pools[pid];
-  if (_ptr[pid] >= pool.length) {
-    _pools[pid] = shuffle(shuffle([...pool]));
-    _ptr[pid] = 0;
+function getViewerId() {
+  const token = localStorage.getItem("sl_token");
+  if (!token) return "guest";
+  try {
+    const [, payload] = token.split(".");
+    const parsed = JSON.parse(atob(payload));
+    return parsed?.id || parsed?.sub || "guest";
+  } catch {
+    return "guest";
   }
-  return pool[_ptr[pid]++];
 }
 
-// 15-item feed cycling all 5 platforms
-function buildFeed(batchNum = 0) {
-  const pattern = [
-    "youtube",
-    "tiktok",
-    "instagram",
-    "youtube",
-    "facebook",
-    "youtube",
-    "snapchat",
-    "tiktok",
-    "instagram",
-    "youtube",
-    "facebook",
-    "youtube",
-    "snapchat",
-    "tiktok",
-    "instagram",
-  ];
-  return pattern.map((pid, i) => {
-    const item = nextItem(pid);
-    return { ...item, uid: `b${batchNum}-${i}-${item.ytId}-${Date.now()}` };
+function prefsKeyFor(viewerId) {
+  return `${PREFS_BASE_KEY}:${viewerId}`;
+}
+function seenKeyFor(viewerId) {
+  return `${SEEN_BASE_KEY}:${viewerId}`;
+}
+
+function emptyPrefs() {
+  return {
+    liked: {},
+    catAffinity: {},
+    creatorAffinity: {},
+    catWatch: {},
+    creatorWatch: {},
+    catWatchMs: {},
+    creatorWatchMs: {},
+    platformAffinity: {},
+    blockedIds: [],
+  };
+}
+
+function loadPrefs(viewerId) {
+  const parsed = safeParse(localStorage.getItem(prefsKeyFor(viewerId)), {});
+  const obj =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  return { ...emptyPrefs(), ...obj };
+}
+
+function loadAvailability() {
+  return safeParse(localStorage.getItem(AVAIL_KEY), {});
+}
+function saveAvailability(map) {
+  localStorage.setItem(AVAIL_KEY, JSON.stringify(map));
+}
+
+function cleanAvailabilityMap(map) {
+  if (!map || typeof map !== "object" || Array.isArray(map)) return {};
+  const now = Date.now();
+  return Object.fromEntries(
+    Object.entries(map).filter(
+      ([, v]) => now - (v?.checkedAt || 0) < AVAIL_TTL_MS,
+    ),
+  );
+}
+
+function loadSeenIds(viewerId) {
+  const parsed = safeParse(localStorage.getItem(seenKeyFor(viewerId)), []);
+  return Array.isArray(parsed)
+    ? parsed.filter((x) => typeof x === "string")
+    : [];
+}
+
+function saveSeenIds(viewerId, ids) {
+  localStorage.setItem(
+    seenKeyFor(viewerId),
+    JSON.stringify(ids.slice(0, MAX_SEEN_HISTORY)),
+  );
+}
+
+function loadSignals() {
+  return safeParse(localStorage.getItem(SIGNALS_KEY), {});
+}
+function saveSignals(signals) {
+  localStorage.setItem(SIGNALS_KEY, JSON.stringify(signals));
+}
+
+function recordSignal(ytId, platform, watchMs, signals) {
+  const prev = signals[ytId] || {
+    watchMs: 0,
+    views: 0,
+    skips: 0,
+    replays: 0,
+    platformTally: {},
+  };
+  const isSkip = watchMs < SKIP_THRESHOLD_MS;
+  const isReplay = prev.views > 0;
+  const pt = { ...prev.platformTally };
+  pt[platform] = (pt[platform] || 0) + 1;
+  return {
+    ...signals,
+    [ytId]: {
+      watchMs: prev.watchMs + watchMs,
+      views: prev.views + 1,
+      skips: prev.skips + (isSkip ? 1 : 0),
+      replays: prev.replays + (isReplay ? 1 : 0),
+      platformTally: pt,
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCORING
+// ─────────────────────────────────────────────────────────────────────────────
+function weightedPick(candidates, getScore) {
+  const scored = candidates.map((v) => ({ v, s: Math.max(0.05, getScore(v)) }));
+  const total = scored.reduce((sum, x) => sum + x.s, 0);
+  let r = Math.random() * total;
+  for (const x of scored) {
+    r -= x.s;
+    if (r <= 0) return x.v;
+  }
+  return scored[scored.length - 1]?.v || null;
+}
+
+function scoreVideo(video, prefs, recentIds, recentCreators, signals) {
+  const catLike = prefs.catAffinity?.[video.cat] || 0;
+  const creatorLike = prefs.creatorAffinity?.[video.creator] || 0;
+  const catWatch = prefs.catWatch?.[video.cat] || 0;
+  const creatorWatch = prefs.creatorWatch?.[video.creator] || 0;
+  const catWatchMs = prefs.catWatchMs?.[video.cat] || 0;
+  const creatorWatchMs = prefs.creatorWatchMs?.[video.creator] || 0;
+  const platformAff = prefs.platformAffinity?.[video.platform] || 0;
+  const sig = signals?.[video.ytId];
+  const sigSkipRate = sig ? sig.skips / Math.max(1, sig.views) : 0;
+  const sigAvgWatchS = sig ? sig.watchMs / Math.max(1, sig.views) / 1000 : 0;
+  const sigReplays = sig?.replays || 0;
+
+  let score = 1;
+  score += catLike * 2.5 + creatorLike * 3.5;
+  score += Math.min(1.2, catWatch * 0.25) + Math.min(1.2, creatorWatch * 0.2);
+  score += Math.min(2.0, Math.log1p(catWatchMs / 1000) * 0.18);
+  score += Math.min(2.0, Math.log1p(creatorWatchMs / 1000) * 0.22);
+  score += Math.min(1.5, platformAff * 0.3);
+  if (prefs.liked?.[video.ytId]) score += 2.0;
+  if (sig) {
+    if (sigAvgWatchS >= HOOKED_THRESHOLD_MS / 1000) score += 3.0;
+    else if (sigAvgWatchS >= WATCH_THRESHOLD_MS / 1000) score += 1.5;
+    else if (sigAvgWatchS >= GLANCE_THRESHOLD_MS / 1000) score += 0.5;
+    score += Math.min(3.0, sigReplays * 1.5);
+    score *= 1 - sigSkipRate * 0.7;
+  }
+  // Recency: penalise recently seen but don't hard-block (unlike before)
+  if (recentIds.slice(0, 6).includes(video.ytId)) score *= 0.05;
+  else if (recentIds.includes(video.ytId)) score *= 0.3;
+  if (recentCreators.slice(0, 3).includes(video.creator)) score *= 0.32;
+  score += Math.random() * 0.6;
+  return Math.max(0.01, score);
+}
+
+/**
+ * Build a batch of PATTERN.length slides.
+ *
+ * FIX: `feedSeenIds` is the Set of ytIds already in the current feed.
+ * We first try to pick from videos NOT in the feed. If the pool is
+ * exhausted we fall back to already-shown videos (enabling true infinite
+ * scroll) rather than returning an empty array.
+ */
+function buildBatch(
+  batchNum,
+  prefs,
+  blockedSet,
+  recentIds,
+  recentCreators,
+  signals,
+  feedSeenIds = new Set(),
+) {
+  const pool = getDynamicPool().filter((v) => !blockedSet.has(v.ytId));
+  if (pool.length === 0) return [];
+
+  const usedInBatch = new Set();
+
+  return PATTERN.map((platform, i) => {
+    // Prefer: not blocked, not in current feed, not used in this batch
+    const freshPool = pool.filter(
+      (v) => !feedSeenIds.has(v.ytId) && !usedInBatch.has(v.ytId),
+    );
+    // Fallback 1: allow videos already in feed (true infinite)
+    const relaxedPool =
+      freshPool.length > 0
+        ? freshPool
+        : pool.filter((v) => !usedInBatch.has(v.ytId));
+    // Fallback 2: any non-blocked video
+    const finalPool = relaxedPool.length > 0 ? relaxedPool : pool;
+
+    const selected =
+      weightedPick(finalPool, (v) =>
+        scoreVideo(v, prefs, recentIds, recentCreators, signals),
+      ) || finalPool[Math.floor(Math.random() * finalPool.length)];
+
+    usedInBatch.add(selected.ytId);
+    return {
+      ...selected,
+      platform,
+      uid: `${batchNum}-${i}-${Math.random().toString(36).slice(2)}`,
+    };
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROXY + RSS FETCH
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Expanded query pool — 40 entries across topics so round-robin fetches
+ * deliver diverse content before wrapping.
+ */
+const SHORTS_QUERIES = [
+  "viral shorts 2025",
+  "trending videos",
+  "funny moments viral",
+  "satisfying clips",
+  "amazing videos 2025",
+  "best of youtube",
+  "must watch",
+  "top viral clips",
+  "incredible moments",
+  "popular shorts",
+  "entertainment viral",
+  "wow moments",
+  "unbelievable clips",
+  "best videos 2025",
+  "trending now",
+  "funny viral",
+  "shocking moments",
+  "wholesome viral",
+  "skill videos",
+  "talent show clips",
+  // new additions for diversity
+  "dance challenge viral",
+  "cooking tips viral",
+  "travel shorts",
+  "fitness motivation",
+  "art satisfying",
+  "animals funny",
+  "science wow",
+  "sports highlights",
+  "comedy skits viral",
+  "life hacks shorts",
+  "music covers viral",
+  "street food shorts",
+  "nature beautiful",
+  "magic tricks viral",
+  "baby animals cute",
+  "fails compilation",
+  "inspirational moments",
+  "gaming clips viral",
+  "beauty tips shorts",
+  "diy creative",
+];
+
+let queryIdx = 0;
+
+function parseRssXml(xml) {
+  const results = [];
+  if (!xml) return results;
+  const rx = /<entry>([\s\S]*?)<\/entry>/g;
+  let m;
+  while ((m = rx.exec(xml)) !== null) {
+    const e = m[1];
+    const idM = e.match(/<yt:videoId>([^<]+)<\/yt:videoId>/);
+    const ttM = e.match(/<title[^>]*>([^<]+)<\/title>/);
+    const nmM = e.match(/<name>([^<]+)<\/name>/);
+    if (!idM || !ttM) continue;
+    results.push({
+      ytId: idM[1].trim(),
+      title: ttM[1]
+        .trim()
+        .replace(/&amp;/g, "&")
+        .replace(/&quot;/g, '"')
+        .substring(0, 80),
+      creator: nmM ? "@" + nmM[1].trim().replace(/\s+/g, "") : "@creator",
+    });
+  }
+  return results;
+}
+
+async function fetchViaProxy(ytUrl) {
+  const proxies = [
+    `https://api.allorigins.win/get?url=${encodeURIComponent(ytUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(ytUrl)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(ytUrl)}`,
+  ];
+  for (const proxyUrl of proxies) {
+    try {
+      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) continue;
+      const text = await res.text();
+      if (text.startsWith("{")) {
+        try {
+          return JSON.parse(text).contents || "";
+        } catch {
+          continue;
+        }
+      }
+      return text;
+    } catch {
+      continue;
+    }
+  }
+  return "";
+}
+
+/**
+ * Fetch a page of videos and add NEW ones to `dynamicPoolMap`.
+ * Returns how many new videos were added to the pool.
+ *
+ * FIX: We no longer use a permanent `globalSeenYtIds` Set that blocks
+ * re-fetching. Instead we only skip videos already in the pool (true
+ * dedup), not videos already shown to the user.
+ */
+async function fetchAndExpandPool(cat = "For You") {
+  // Pick queries — cat-aware: prepend a category query when not "For You"
+  const catQuery =
+    cat !== "For You" ? cat.toLowerCase() + " shorts viral" : null;
+
+  const q1 = catQuery || SHORTS_QUERIES[queryIdx % SHORTS_QUERIES.length];
+  const q2 =
+    SHORTS_QUERIES[(queryIdx + (catQuery ? 0 : 1)) % SHORTS_QUERIES.length];
+  queryIdx += catQuery ? 1 : 2;
+
+  const base = "https://www.youtube.com/feeds/videos.xml?search_query=";
+  const [xml1, xml2] = await Promise.all([
+    fetchViaProxy(base + encodeURIComponent(q1)),
+    fetchViaProxy(base + encodeURIComponent(q2)),
+  ]);
+
+  const raw = [...parseRssXml(xml1), ...parseRssXml(xml2)];
+  let added = 0;
+  for (const v of raw) {
+    if (!dynamicPoolMap.has(v.ytId)) {
+      dynamicPoolMap.set(v.ytId, {
+        ...v,
+        cat: cat !== "For You" ? cat : "For You",
+      });
+      added++;
+    }
+  }
+  return added;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CSS
 // ─────────────────────────────────────────────────────────────────────────────
-const GLOBAL_CSS = `
-.sv-portal{position:fixed;inset:0;z-index:9999;display:flex;background:#000;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden}
-.sv-sidebar{width:60px;flex-shrink:0;background:#0a0a0a;border-right:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:6px;z-index:10}
-.sv-sbtn{width:44px;height:44px;border-radius:12px;border:1.5px solid transparent;background:rgba(255,255,255,.05);color:#555;font-size:16px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .18s;outline:none}
-.sv-sbtn:hover{opacity:.85}
-.sv-feed-area{flex:1;position:relative;overflow:hidden;display:flex;flex-direction:column}
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+.sv{position:fixed;inset:0;z-index:9999;display:flex;background:#06060a;font-family:'DM Sans',-apple-system,sans-serif;overflow:hidden}
+
+.sv-side{width:60px;flex-shrink:0;background:#08080c;border-right:1px solid rgba(255,255,255,.05);display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:2px;z-index:10}
+.sv-sb{width:44px;height:44px;border-radius:12px;border:1.5px solid transparent;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;transition:all .2s;outline:none;color:#2e2e2e;position:relative;font-family:inherit}
+.sv-sb:hover{color:#666}
+.sv-tip{position:absolute;left:54px;top:50%;transform:translateY(-50%);background:#111;border:1px solid rgba(255,255,255,.08);color:#ccc;font-size:10px;font-weight:600;padding:4px 10px;border-radius:8px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:100}
+.sv-sb:hover .sv-tip{opacity:1}
+
+.sv-feed{flex:1;position:relative;overflow:hidden;display:flex;flex-direction:column}
 .sv-scroll{flex:1;overflow-y:scroll;scroll-snap-type:y mandatory}
 .sv-scroll::-webkit-scrollbar{display:none}
-.sv-slide{height:100vh;width:100%;scroll-snap-align:start;scroll-snap-stop:always;position:relative;overflow:hidden;flex-shrink:0}
-.sv-cats{position:absolute;top:0;left:0;right:0;z-index:20;padding:10px 12px 20px;background:linear-gradient(to bottom,rgba(0,0,0,.9) 0%,transparent 100%);pointer-events:none}
+.sv-slide{height:100vh;width:100%;scroll-snap-align:start;scroll-snap-stop:always;position:relative;overflow:hidden;flex-shrink:0;background:#000}
+
+.sv-frame{position:absolute;inset:0;z-index:1}
+.sv-frame iframe{width:100%;height:100%;border:none;display:block}
+
+.sv-glow{position:absolute;inset:-60px;z-index:0;pointer-events:none;filter:blur(90px);opacity:.35;transition:opacity .4s}
+
+.sv-bar{position:absolute;top:0;left:0;right:0;height:3px;z-index:22;pointer-events:none}
+
+.sv-badge{position:absolute;top:50px;left:14px;z-index:25;display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,.6);backdrop-filter:blur(14px);border-radius:20px;padding:5px 12px;font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.08)}
+
+.sv-sound{position:absolute;top:12px;right:12px;z-index:35;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.65);backdrop-filter:blur(18px);border:1.5px solid rgba(255,255,255,.15);color:#fff;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;outline:none}
+.sv-sound:hover{transform:scale(1.1);background:rgba(255,255,255,.1)}
+
+.sv-bot{position:absolute;bottom:0;left:0;right:0;z-index:20;background:linear-gradient(to top,rgba(0,0,0,.97) 0%,rgba(0,0,0,.78) 28%,rgba(0,0,0,.35) 55%,transparent 100%);padding:0 14px 18px}
+
+.sv-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.sv-av{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;flex-shrink:0;border:2px solid rgba(255,255,255,.15);box-shadow:0 2px 12px rgba(0,0,0,.5)}
+.sv-name{font-size:13px;font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sv-cat-lbl{font-size:10px;color:rgba(255,255,255,.38);margin-top:1px}
+.sv-sub{border-radius:20px;padding:5px 14px;font-size:11.5px;font-weight:700;cursor:pointer;border:2px solid;font-family:inherit;transition:all .18s;outline:none;white-space:nowrap}
+.sv-sub:hover{filter:brightness(1.1)}
+
+.sv-title{font-size:13px;color:rgba(255,255,255,.88);margin:0 0 11px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-weight:400}
+
+.sv-open{display:inline-flex;align-items:center;gap:5px;padding:8px 18px;border-radius:999px;border:none;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none;transition:all .2s;box-shadow:0 3px 18px rgba(0,0,0,.4)}
+.sv-open:hover{transform:translateY(-2px);box-shadow:0 7px 26px rgba(0,0,0,.55)}
+
+.sv-acts{position:absolute;right:12px;bottom:130px;z-index:30;display:flex;flex-direction:column;align-items:center;gap:16px}
+.sv-act{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer}
+.sv-btn{width:48px;height:48px;border-radius:50%;background:rgba(6,6,10,.75);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:center;font-size:21px;border:1.5px solid rgba(255,255,255,.09);transition:all .2s;box-shadow:0 2px 14px rgba(0,0,0,.5)}
+.sv-btn:hover{transform:scale(1.1)}
+.sv-lbl{font-size:10px;color:rgba(255,255,255,.45);font-weight:600}
+
+.sv-cats{position:absolute;top:0;left:0;right:0;z-index:24;padding:12px 12px 26px;background:linear-gradient(to bottom,rgba(0,0,0,.88) 0%,transparent 100%);pointer-events:none}
 .sv-cats-row{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;pointer-events:all}
 .sv-cats-row::-webkit-scrollbar{display:none}
-.sv-cbt{padding:5px 14px;border-radius:20px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;font-family:inherit;transition:all .18s;outline:none}
-.sv-cbt-on{background:linear-gradient(90deg,#7c3aed,#db2777);color:#fff;border:none;box-shadow:0 0 14px rgba(124,58,237,.45)}
-.sv-cbt-off{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.15)}
-.sv-actions{position:absolute;right:12px;bottom:120px;z-index:30;display:flex;flex-direction:column;align-items:center;gap:16px}
-.sv-ac{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer}
-.sv-circle{width:46px;height:46px;border-radius:50%;background:rgba(0,0,0,.52);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;font-size:20px;border:1.5px solid rgba(255,255,255,.15);transition:all .2s}
-.sv-circle:hover{transform:scale(1.08)}
-.sv-albl{font-size:10px;color:rgba(255,255,255,.72);font-weight:600}
-.sv-follow{border-radius:20px;padding:5px 14px;font-size:12px;font-weight:700;cursor:pointer;border:2px solid;font-family:inherit;transition:all .2s;outline:none;white-space:nowrap}
-.sv-openlink{display:inline-flex;align-items:center;gap:5px;padding:8px 18px;border-radius:999px;border:none;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;letter-spacing:.02em;text-decoration:none;transition:all .2s}
-.sv-openlink:hover{opacity:.85;transform:translateY(-1px)}
-.sv-heart{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:96px;pointer-events:none;z-index:40;animation:svheart .9s ease-out forwards}
-.sv-hint{position:absolute;bottom:72px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:none;animation:svpulse 2s ease-in-out infinite;z-index:5}
+.sv-pill{padding:5px 14px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit;transition:all .18s;outline:none}
+.sv-pill-on{background:linear-gradient(90deg,#7c3aed,#db2777);color:#fff;border:none;box-shadow:0 0 18px rgba(124,58,237,.5)}
+.sv-pill-off{background:rgba(255,255,255,.07);color:rgba(255,255,255,.65);border:1px solid rgba(255,255,255,.1)}
+.sv-pill-off:hover{background:rgba(255,255,255,.12)}
+
 .sv-dots{position:absolute;right:5px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:4px;z-index:20;max-height:40vh;overflow:hidden}
 .sv-dot{border-radius:4px;cursor:pointer;transition:all .2s}
-.sv-nowbar{position:absolute;bottom:0;left:0;right:0;z-index:20;pointer-events:none}
-.sv-nowinner{max-width:480px;margin:0 auto;background:rgba(6,4,14,.9);backdrop-filter:blur(20px);border-radius:10px 10px 0 0;padding:7px 14px;display:flex;align-items:center;gap:9px}
-.sv-loader{height:80px;display:flex;align-items:center;justify-content:center}
-.sv-spinner{width:28px;height:28px;border-radius:50%;border:2px solid rgba(255,255,255,.08);border-top-color:#7c3aed;animation:svspin .8s linear infinite}
-.sv-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,.6);backdrop-filter:blur(8px);border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700}
-.sv-sound-btn{position:absolute;top:14px;right:14px;z-index:35;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.65);backdrop-filter:blur(12px);border:1.5px solid rgba(255,255,255,.25);color:#fff;font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;outline:none;box-shadow:0 2px 12px rgba(0,0,0,.5)}
-.sv-sound-btn:hover{background:rgba(255,255,255,.18);transform:scale(1.1)}
-@keyframes svheart{0%{transform:scale(.4);opacity:1}55%{transform:scale(1.4);opacity:1}100%{transform:scale(1.9);opacity:0}}
-@keyframes svpulse{0%,100%{opacity:1}50%{opacity:.25}}
-@keyframes svspin{to{transform:rotate(360deg)}}
+
+.sv-now{position:absolute;bottom:0;left:0;right:0;z-index:20;pointer-events:none}
+.sv-now-in{max-width:480px;margin:0 auto;background:rgba(4,3,10,.94);backdrop-filter:blur(24px);border-radius:12px 12px 0 0;padding:8px 14px;display:flex;align-items:center;gap:8px;border-top:1px solid rgba(255,255,255,.05)}
+
+.sv-hint{position:absolute;bottom:74px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:none;animation:sv-pulse 2s ease-in-out infinite;z-index:5}
+
+.sv-load{height:80px;display:flex;align-items:center;justify-content:center}
+.sv-spin{width:26px;height:26px;border-radius:50%;border:2px solid rgba(255,255,255,.07);border-top-color:#7c3aed;animation:sv-spin .75s linear infinite}
+
+.sv-heart{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:90px;pointer-events:none;z-index:40;animation:sv-heart .8s ease-out forwards}
+
+@keyframes sv-heart{0%{transform:scale(.3);opacity:1}55%{transform:scale(1.3);opacity:1}100%{transform:scale(1.7);opacity:0}}
+@keyframes sv-pulse{0%,100%{opacity:1}50%{opacity:.2}}
+@keyframes sv-spin{to{transform:rotate(360deg)}}
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ACTION BAR
+// ACTIONS
 // ─────────────────────────────────────────────────────────────────────────────
-function Actions({
-  liked,
-  saved,
-  likes,
-  comments,
-  shares,
-  color,
-  onLike,
-  onSave,
-}) {
-  const fmt = (l) =>
-    typeof l === "string" && l.length > 7 ? l.slice(0, 5) + "…" : l;
+function Actions({ liked, saved, accent, onLike, onSave }) {
   return (
-    <div className="sv-actions">
+    <div className="sv-acts">
       {[
-        {
-          icon: liked ? "❤️" : "🤍",
-          label: likes,
-          active: liked,
-          fn: (e) => {
-            e.stopPropagation();
-            onLike();
-          },
-        },
-        {
-          icon: "💬",
-          label: comments,
-          active: false,
-          fn: (e) => e.stopPropagation(),
-        },
-        {
-          icon: "↗️",
-          label: shares,
-          active: false,
-          fn: (e) => e.stopPropagation(),
-        },
-        {
-          icon: saved ? "🔖" : "📌",
-          label: "Save",
-          active: saved,
-          fn: (e) => {
-            e.stopPropagation();
-            onSave();
-          },
-        },
-      ].map(({ icon, label, active, fn }) => (
-        <div key={icon} className="sv-ac" onClick={fn}>
+        { e: liked ? "❤️" : "🤍", l: "142K", active: liked, fn: onLike },
+        { e: "💬", l: "8.4K", active: false, fn: null },
+        { e: "↗️", l: "21K", active: false, fn: null },
+        { e: saved ? "🔖" : "📌", l: "Save", active: saved, fn: onSave },
+      ].map(({ e, l, active, fn }) => (
+        <div
+          key={e}
+          className="sv-act"
+          onClick={(ev) => {
+            ev.stopPropagation();
+            fn?.();
+          }}
+        >
           <div
-            className="sv-circle"
+            className="sv-btn"
             style={{
-              background: active ? `${color}33` : "rgba(0,0,0,.52)",
-              border: active
-                ? `1.5px solid ${color}`
-                : "1.5px solid rgba(255,255,255,.15)",
-              transform: active ? "scale(1.1)" : "scale(1)",
+              background: active ? `rgba(${accent},0.18)` : "rgba(6,6,10,.75)",
+              borderColor: active
+                ? `rgba(${accent},0.5)`
+                : "rgba(255,255,255,.09)",
             }}
           >
-            {icon}
+            {e}
           </div>
-          <span className="sv-albl">{fmt(label)}</span>
+          <span className="sv-lbl">{l}</span>
         </div>
       ))}
     </div>
@@ -1214,84 +754,114 @@ function Actions({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PLATFORM CARD — real YouTube iframe + platform skin overlay
+// CARD
 // ─────────────────────────────────────────────────────────────────────────────
-function PlatformCard({ video, isActive, muted, onToggleSound }) {
-  const [liked, setLiked] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [follow, setFollow] = useState(false);
+function Card({
+  video,
+  isActive,
+  muted,
+  onToggleSound,
+  isLiked,
+  isSaved,
+  onLikeChange,
+  onSaveChange,
+  onUnavailable,
+}) {
+  const [liked, setLiked] = useState(isLiked);
+  const [saved, setSaved] = useState(isSaved);
+  const [sub, setSub] = useState(false);
   const [heart, setHeart] = useState(false);
-  const iframeRef = useRef(null);
-  const loadedRef = useRef(false);
+  const iRef = useRef(null);
+  const ready = useRef(false);
   const lastTap = useRef(0);
-  const isActiveRef = useRef(isActive);
+  const unavailableSent = useRef(false);
+  const isActRef = useRef(isActive);
   const mutedRef = useRef(muted);
+  const sk = SKINS[video.platform] || SKINS.youtube;
 
   useEffect(() => {
-    isActiveRef.current = isActive;
+    isActRef.current = isActive;
   }, [isActive]);
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
+  useEffect(() => {
+    setLiked(isLiked);
+  }, [isLiked, video.uid]);
+  useEffect(() => {
+    setSaved(isSaved);
+  }, [isSaved, video.uid]);
 
-  const skin = SKINS[video.platform] || SKINS.youtube;
-
-  const postMsg = useCallback((cmd) => {
-    const f = iframeRef.current;
-    if (f && loadedRef.current) f.contentWindow.postMessage(cmd, "*");
+  const msg = useCallback((cmd) => {
+    if (iRef.current && ready.current)
+      iRef.current.contentWindow.postMessage(cmd, "*");
   }, []);
 
-  const applyState = useCallback(
+  const sync = useCallback(
     (active, m) => {
       if (active) {
-        postMsg('{"event":"command","func":"playVideo","args":""}');
-        postMsg(
+        msg('{"event":"command","func":"playVideo","args":""}');
+        msg(
           m
             ? '{"event":"command","func":"mute","args":""}'
             : '{"event":"command","func":"unMute","args":""}',
         );
-        if (!m) postMsg('{"event":"command","func":"setVolume","args":[100]}');
+        if (!m) msg('{"event":"command","func":"setVolume","args":[100]}');
       } else {
-        postMsg('{"event":"command","func":"pauseVideo","args":""}');
-        postMsg('{"event":"command","func":"mute","args":""}');
+        msg('{"event":"command","func":"pauseVideo","args":""}');
+        msg('{"event":"command","func":"mute","args":""}');
       }
     },
-    [postMsg],
+    [msg],
   );
 
-  const handleLoad = useCallback(() => {
-    loadedRef.current = true;
-    applyState(isActiveRef.current, mutedRef.current);
-  }, [applyState]);
-
+  const onLoad = useCallback(() => {
+    ready.current = true;
+    sync(isActRef.current, mutedRef.current);
+  }, [sync]);
   useEffect(() => {
-    if (!loadedRef.current) return;
-    applyState(isActive, muted);
-  }, [isActive, muted, applyState]);
+    if (!ready.current) return;
+    sync(isActive, muted);
+  }, [isActive, muted, sync]);
 
-  const toggleSound = useCallback(
-    (e) => {
-      e.stopPropagation();
-      if (!loadedRef.current) return;
-      onToggleSound();
-      if (!muted) {
-        postMsg('{"event":"command","func":"mute","args":""}');
-      } else {
-        postMsg('{"event":"command","func":"unMute","args":""}');
-        postMsg('{"event":"command","func":"setVolume","args":[100]}');
-      }
-    },
-    [muted, onToggleSound, postMsg],
-  );
+  const toggleSound = (e) => {
+    e.stopPropagation();
+    if (!ready.current) return;
+    onToggleSound();
+    if (!muted) {
+      msg('{"event":"command","func":"mute","args":""}');
+    } else {
+      msg('{"event":"command","func":"unMute","args":""}');
+      msg('{"event":"command","func":"setVolume","args":[100]}');
+    }
+  };
 
   const tap = () => {
     const now = Date.now();
     if (now - lastTap.current < 300) {
-      if (!liked) setLiked(true);
+      if (!liked) {
+        setLiked(true);
+        onLikeChange?.(video, true);
+      }
       setHeart(true);
       setTimeout(() => setHeart(false), 900);
     }
     lastTap.current = now;
+  };
+
+  const toggleLike = () => {
+    setLiked((prev) => {
+      const next = !prev;
+      onLikeChange?.(video, next);
+      return next;
+    });
+  };
+  const toggleSave = () => {
+    setSaved((prev) => {
+      const next = !prev;
+      onSaveChange?.(video, next);
+      return next;
+    });
   };
 
   const src = `https://www.youtube.com/embed/${video.ytId}?autoplay=1&mute=1&loop=1&playlist=${video.ytId}&controls=0&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`;
@@ -1302,296 +872,464 @@ function PlatformCard({ video, isActive, muted, onToggleSound }) {
       style={{
         width: "100%",
         height: "100%",
-        background: "#000",
         position: "relative",
+        background: "#000",
       }}
     >
       {heart && <div className="sv-heart">❤️</div>}
-
-      {/* Platform colour top bar */}
       <div
+        className="sv-glow"
         style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 3,
-          background: skin.barColor,
-          zIndex: 20,
+          background: `radial-gradient(ellipse at 50% 65%, rgba(${sk.glow},0.35) 0%, transparent 68%)`,
+          opacity: isActive ? 1 : 0,
         }}
       />
-
-      {/* Sound toggle */}
-      <button
-        className="sv-sound-btn"
-        onClick={toggleSound}
-        title={muted ? "Turn on sound" : "Mute"}
-      >
+      <div className="sv-bar" style={{ background: sk.barBg }} />
+      <div className="sv-frame">
+        <iframe
+          key={video.ytId}
+          ref={iRef}
+          src={src}
+          onLoad={onLoad}
+          onError={() => {
+            if (!unavailableSent.current) {
+              unavailableSent.current = true;
+              onUnavailable?.(video.ytId);
+            }
+          }}
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowFullScreen
+        />
+      </div>
+      <button className="sv-sound" onClick={toggleSound}>
         {muted ? "🔇" : "🔊"}
       </button>
-
-      {/* Real YouTube iframe — plays actual video */}
-      <iframe
-        ref={iframeRef}
-        src={src}
-        onLoad={handleLoad}
-        allow="autoplay; encrypted-media; picture-in-picture"
-        allowFullScreen
-        style={{
-          position: "absolute",
-          inset: 0,
-          width: "100%",
-          height: "100%",
-          border: "none",
-          zIndex: 1,
-        }}
-      />
-
-      {/* Platform badge top-left */}
-      <div style={{ position: "absolute", top: 16, left: 14, zIndex: 20 }}>
-        <div
-          className="sv-badge"
-          style={{ border: `1px solid ${skin.accent}55`, color: "#fff" }}
-        >
-          <span style={{ color: skin.accent, fontSize: 13 }}>{skin.icon}</span>
-          <span>{skin.badgeLabel}</span>
-        </div>
-      </div>
-
-      {/* Bottom info overlay */}
       <div
-        style={{
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          zIndex: 20,
-          background:
-            "linear-gradient(to top,rgba(0,0,0,.92) 0%,rgba(0,0,0,.55) 45%,transparent 100%)",
-          padding: "0 14px 18px",
-        }}
+        className="sv-badge"
+        style={{ borderColor: `rgba(${sk.glow},0.3)`, color: "#fff" }}
       >
-        {/* Creator row */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            marginBottom: 7,
-          }}
-        >
+        <span style={{ color: sk.accent, fontSize: 12 }}>{sk.icon}</span>
+        {sk.tag}
+      </div>
+      <div className="sv-bot">
+        <div className="sv-row">
           <div
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: "50%",
-              background: skin.avatarBg,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 15,
-              flexShrink: 0,
-              border: "2px solid rgba(255,255,255,.25)",
-            }}
+            className="sv-av"
+            style={{ background: sk.avatarBg, color: sk.avatarColor }}
           >
-            {skin.icon}
+            {sk.icon}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div
-              style={{
-                fontSize: 13,
-                fontWeight: 700,
-                color: "#fff",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {video.creator}
-            </div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,.5)" }}>
-              {video.cat}
-            </div>
+            <div className="sv-name">{video.creator}</div>
+            <div className="sv-cat-lbl">{video.cat}</div>
           </div>
           <button
-            className="sv-follow"
+            className="sv-sub"
             onClick={(e) => {
               e.stopPropagation();
-              setFollow((f) => !f);
+              setSub((s) => !s);
             }}
             style={{
-              background: follow ? skin.followBg[1] : skin.followBg[0],
-              borderColor: skin.followBorder,
-              color: follow ? skin.followColor[1] : skin.followColor[0],
+              background: sub ? sk.subBg[1] : sk.subBg[0],
+              borderColor: sk.subBdr,
+              color: sub ? sk.subClr[1] : sk.subClr[0],
             }}
           >
-            {follow ? skin.followLabel[1] : skin.followLabel[0]}
+            {sk.subLabels[sub ? 1 : 0]}
           </button>
         </div>
-
-        {/* Title */}
-        <p
-          style={{
-            fontSize: 13,
-            color: "#fff",
-            margin: "0 0 10px",
-            lineHeight: 1.4,
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-          }}
-        >
-          {video.title}
-        </p>
-
-        {/* Open on platform button */}
+        <p className="sv-title">{video.title}</p>
         <a
-          className="sv-openlink"
-          href={skin.openHref(video)}
+          className="sv-open"
+          href={sk.openUrl(video)}
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
-          style={{ background: skin.openBg, color: skin.openColor }}
+          style={{ background: sk.openBg, color: sk.openClr }}
         >
-          {skin.openLabel} ↗
+          {sk.openTxt} ↗
         </a>
       </div>
-
       <Actions
         liked={liked}
         saved={saved}
-        likes="142K"
-        comments="8.4K"
-        shares="21K"
-        color={skin.accent}
-        onLike={() => setLiked((l) => !l)}
-        onSave={() => setSaved((s) => !s)}
+        accent={sk.glow}
+        onLike={toggleLike}
+        onSave={toggleSave}
       />
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MAIN
+// ROOT COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 export default function ShortsVerse() {
   const navigate = useNavigate();
-  const [platFilter, setPlatFilter] = useState("all");
-  const [cat, setCat] = useState("For You");
-  const [feed, setFeed] = useState(() => buildFeed(0));
-  const [batchNum, setBatchNum] = useState(1);
-  const [activeIdx, setActiveIdx] = useState(0);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [showHint, setShowHint] = useState(true);
-  const [globalMuted, setGlobalMuted] = useState(true);
-  const scrollRef = useRef(null);
-  const observerRef = useRef(null);
-  const slideRefs = useRef([]);
+  const viewerIdRef = useRef(getViewerId());
+  const recentIdsRef = useRef([]);
+  const recentCreatorsRef = useRef([]);
+  const [prefs, setPrefs] = useState(() => loadPrefs(viewerIdRef.current));
+  const [signals, setSignals] = useState(() => loadSignals());
+  const enterTimeRef = useRef(Date.now());
 
+  // FIX: fetchingRemoteRef now resets via timeout guard — a stalled fetch
+  // will never permanently block loadMore.
+  const fetchingRemoteRef = useRef(false);
+  const fetchGuardTimer = useRef(null);
+
+  const [fetchError, setFetchError] = useState(false);
+  const [blockedIds, setBlockedIds] = useState(() => {
+    const avail = cleanAvailabilityMap(loadAvailability());
+    const knownUnavailable = Object.entries(avail)
+      .filter(([, v]) => v?.available === false)
+      .map(([id]) => id);
+    return new Set([
+      ...loadPrefs(viewerIdRef.current).blockedIds,
+      ...knownUnavailable,
+    ]);
+  });
+  const [filter, setFilter] = useState("all");
+  const [cat, setCat] = useState("For You");
+  const batchCounterRef = useRef(Math.floor(Math.random() * 1000));
+
+  // Feed is initialised from the seed pool
+  const [feed, setFeed] = useState(() =>
+    buildBatch(
+      batchCounterRef.current++,
+      loadPrefs(viewerIdRef.current),
+      new Set(),
+      [],
+      [],
+      loadSignals(),
+      new Set(),
+    ),
+  );
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [showHint, setShowHint] = useState(true);
+  const [muted, setMuted] = useState(true);
+  const scrollRef = useRef(null);
+  const obsRef = useRef(null);
+  const slideRefs = useRef([]);
+  const [savedMap, setSavedMap] = useState({});
+
+  // Persist prefs
   useEffect(() => {
-    if (document.getElementById("sv-style")) return;
-    const s = document.createElement("style");
-    s.id = "sv-style";
-    s.textContent = GLOBAL_CSS;
-    document.head.appendChild(s);
-    return () => s.remove();
+    localStorage.setItem(
+      prefsKeyFor(viewerIdRef.current),
+      JSON.stringify(prefs),
+    );
+  }, [prefs]);
+
+  // Availability check
+  useEffect(() => {
+    const current = cleanAvailabilityMap(loadAvailability());
+    saveAvailability(current);
+    const staleOrUnknown = getDynamicPool().filter((v) => {
+      const entry = current[v.ytId];
+      return !entry || Date.now() - (entry.checkedAt || 0) > AVAIL_TTL_MS;
+    });
+    if (staleOrUnknown.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const updates = {};
+      await Promise.all(
+        staleOrUnknown.map(async (v) => {
+          try {
+            const url = `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${v.ytId}`)}&format=json`;
+            const r = await fetch(url);
+            updates[v.ytId] = { available: r.ok, checkedAt: Date.now() };
+          } catch {}
+        }),
+      );
+      if (cancelled || Object.keys(updates).length === 0) return;
+      const nextAvail = {
+        ...cleanAvailabilityMap(loadAvailability()),
+        ...updates,
+      };
+      saveAvailability(nextAvail);
+      const newlyBlocked = Object.entries(updates)
+        .filter(([, v]) => v.available === false)
+        .map(([id]) => id);
+      if (newlyBlocked.length > 0)
+        setBlockedIds((prev) => new Set([...prev, ...newlyBlocked]));
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // Remove blocked videos from feed
   useEffect(() => {
-    const handler = (e) => {
+    if (blockedIds.size === 0) return;
+    setFeed((prev) => prev.filter((v) => !blockedIds.has(v.ytId)));
+  }, [blockedIds]);
+
+  // Inject CSS
+  useEffect(() => {
+    let el = document.getElementById("sv-css");
+    if (!el) {
+      el = document.createElement("style");
+      el.id = "sv-css";
+      document.head.appendChild(el);
+    }
+    el.textContent = CSS;
+    return () => el.remove();
+  }, []);
+
+  // Keyboard nav
+  useEffect(() => {
+    const h = (e) => {
       if (e.key === "Escape") navigate(-1);
       if (
         (e.key === "ArrowDown" || e.key === "j") &&
         activeIdx < feed.length - 1
       )
-        scrollToSlide(activeIdx + 1);
+        goTo(activeIdx + 1);
       if ((e.key === "ArrowUp" || e.key === "k") && activeIdx > 0)
-        scrollToSlide(activeIdx - 1);
+        goTo(activeIdx - 1);
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [activeIdx, feed.length, navigate]);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [activeIdx, feed.length]);
 
-  const scrollToSlide = (idx) => {
-    const el = slideRefs.current[idx];
-    if (el) el.scrollIntoView({ behavior: "smooth" });
-  };
+  const goTo = (idx) =>
+    slideRefs.current[idx]?.scrollIntoView({ behavior: "smooth" });
 
+  /**
+   * loadMore — the core infinite scroll engine.
+   *
+   * Strategy:
+   * 1. Fetch new videos from the API and add them to the pool.
+   * 2. Regardless of whether the fetch succeeded, build a new batch
+   *    from the (now larger) pool — using `feedSeenIds` so we prefer
+   *    fresh videos but fall back to already-shown ones if needed.
+   * 3. Append the batch to the feed.
+   */
+  const loadMore = useCallback(async () => {
+    if (fetchingRemoteRef.current) return;
+    fetchingRemoteRef.current = true;
+    setLoading(true);
+
+    // Safety: always release guard after 15s even if fetch hangs
+    clearTimeout(fetchGuardTimer.current);
+    fetchGuardTimer.current = setTimeout(() => {
+      fetchingRemoteRef.current = false;
+    }, 15000);
+
+    try {
+      // Try to grow the pool
+      try {
+        await fetchAndExpandPool(cat);
+        setFetchError(false);
+      } catch {
+        setFetchError(true);
+        // Pool growth failed — we still build from existing pool below
+      }
+
+      // Build next batch from enlarged pool
+      setFeed((prev) => {
+        const feedSeenIds = new Set(prev.map((v) => v.ytId));
+        const newBatch = buildBatch(
+          batchCounterRef.current++,
+          prefs,
+          blockedIds,
+          recentIdsRef.current,
+          recentCreatorsRef.current,
+          signals,
+          feedSeenIds,
+        );
+        return newBatch.length > 0 ? [...prev, ...newBatch] : prev;
+      });
+    } finally {
+      clearTimeout(fetchGuardTimer.current);
+      setLoading(false);
+      fetchingRemoteRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cat, blockedIds, prefs, signals]);
+
+  // IntersectionObserver — track active slide, trigger loadMore near end
   useEffect(() => {
-    if (observerRef.current) observerRef.current.disconnect();
-    observerRef.current = new IntersectionObserver(
+    obsRef.current?.disconnect();
+    obsRef.current = new IntersectionObserver(
       (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const idx = parseInt(entry.target.dataset.idx, 10);
+        entries.forEach((en) => {
+          if (en.isIntersecting) {
+            const idx = parseInt(en.target.dataset.idx, 10);
+            if (isNaN(idx)) return;
             setActiveIdx(idx);
-            if (idx >= feed.length - 3 && !loadingMore) loadMore();
             if (idx > 0) setShowHint(false);
+            // FIX: trigger loadMore when within 8 slides of end (was 6)
+            if (idx >= feed.length - 8) loadMore();
           }
         });
       },
-      { threshold: 0.6 },
+      { threshold: 0.5 },
     );
-    slideRefs.current.forEach((el) => {
-      if (el) observerRef.current.observe(el);
+    slideRefs.current.forEach((el) => el && obsRef.current.observe(el));
+    return () => obsRef.current?.disconnect();
+  }, [feed.length, loadMore]);
+
+  // Initial pool expansion on mount
+  useEffect(() => {
+    loadMore();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When feed is small, keep loading
+  useEffect(() => {
+    if (feed.length < 20 && !fetchingRemoteRef.current) loadMore();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feed.length]);
+
+  // FIX: When category changes, trigger a fresh fetch with the new category
+  // query so the pool gets category-relevant videos.
+  const prevCatRef = useRef(cat);
+  useEffect(() => {
+    if (cat === prevCatRef.current) return;
+    prevCatRef.current = cat;
+    // Kick off a fetch for this category immediately
+    if (!fetchingRemoteRef.current) loadMore();
+  }, [cat, loadMore]);
+
+  // Behavioural tracking (unchanged logic)
+  const prevCurRef = useRef(null);
+  const visible =
+    filter === "all" ? feed : feed.filter((v) => v.platform === filter);
+  const cur = visible[activeIdx];
+
+  useEffect(() => {
+    const now = Date.now();
+    const prev = prevCurRef.current;
+    if (prev?.ytId) {
+      const watchMs = now - enterTimeRef.current;
+      setSignals((s) => {
+        const next = recordSignal(prev.ytId, prev.platform, watchMs, s);
+        saveSignals(next);
+        return next;
+      });
+      setPrefs((p) => {
+        const catWatch = { ...(p.catWatch || {}) };
+        const creatorWatch = { ...(p.creatorWatch || {}) };
+        const catWatchMs = { ...(p.catWatchMs || {}) };
+        const creatorWatchMs = { ...(p.creatorWatchMs || {}) };
+        const platformAffinity = { ...(p.platformAffinity || {}) };
+        catWatch[prev.cat] = (catWatch[prev.cat] || 0) + 1;
+        creatorWatch[prev.creator] = (creatorWatch[prev.creator] || 0) + 1;
+        catWatchMs[prev.cat] = (catWatchMs[prev.cat] || 0) + watchMs;
+        creatorWatchMs[prev.creator] =
+          (creatorWatchMs[prev.creator] || 0) + watchMs;
+        const platDelta =
+          watchMs < SKIP_THRESHOLD_MS
+            ? -0.5
+            : watchMs >= WATCH_THRESHOLD_MS
+              ? 1
+              : 0.2;
+        platformAffinity[prev.platform] =
+          (platformAffinity[prev.platform] || 0) + platDelta;
+        return {
+          ...p,
+          catWatch,
+          creatorWatch,
+          catWatchMs,
+          creatorWatchMs,
+          platformAffinity,
+        };
+      });
+    }
+    if (cur?.ytId) {
+      recentIdsRef.current = [
+        cur.ytId,
+        ...recentIdsRef.current.filter((id) => id !== cur.ytId),
+      ].slice(0, MAX_RECENT_IDS);
+      saveSeenIds(viewerIdRef.current, recentIdsRef.current);
+      recentCreatorsRef.current = [
+        cur.creator,
+        ...recentCreatorsRef.current.filter((x) => x !== cur.creator),
+      ].slice(0, MAX_RECENT_CREATORS);
+    }
+    prevCurRef.current = cur;
+    enterTimeRef.current = now;
+  }, [cur?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const markUnavailable = useCallback((ytId) => {
+    setBlockedIds((prev) => {
+      if (prev.has(ytId)) return prev;
+      return new Set([...prev, ytId]);
     });
-    return () => observerRef.current.disconnect();
-  }, [feed, loadingMore]);
+    const current = cleanAvailabilityMap(loadAvailability());
+    current[ytId] = { available: false, checkedAt: Date.now() };
+    saveAvailability(current);
+    setPrefs((prev) => {
+      const blocked = new Set(prev.blockedIds || []);
+      blocked.add(ytId);
+      return { ...prev, blockedIds: [...blocked] };
+    });
+  }, []);
 
-  const loadMore = () => {
-    setLoadingMore(true);
-    setTimeout(() => {
-      setFeed((prev) => [...prev, ...buildFeed(batchNum)]);
-      setBatchNum((n) => n + 1);
-      setLoadingMore(false);
-    }, 600);
-  };
+  const onLikeChange = useCallback((video, nextLiked) => {
+    setPrefs((prev) => {
+      const liked = { ...(prev.liked || {}) };
+      const catAffinity = { ...(prev.catAffinity || {}) };
+      const creatorAffinity = { ...(prev.creatorAffinity || {}) };
+      if (nextLiked) {
+        liked[video.ytId] = true;
+        catAffinity[video.cat] = (catAffinity[video.cat] || 0) + 1;
+        creatorAffinity[video.creator] =
+          (creatorAffinity[video.creator] || 0) + 1;
+      } else {
+        delete liked[video.ytId];
+        catAffinity[video.cat] = Math.max(0, (catAffinity[video.cat] || 0) - 1);
+        creatorAffinity[video.creator] = Math.max(
+          0,
+          (creatorAffinity[video.creator] || 0) - 1,
+        );
+      }
+      return { ...prev, liked, catAffinity, creatorAffinity };
+    });
+  }, []);
 
-  const visibleFeed =
-    platFilter === "all" ? feed : feed.filter((v) => v.platform === platFilter);
-  const toggleSound = () => setGlobalMuted((m) => !m);
-
-  const portal = (
-    <div className="sv-portal">
+  // ── JSX ──────────────────────────────────────────────────────────────────
+  return createPortal(
+    <div className="sv">
       {/* Sidebar */}
-      <aside className="sv-sidebar">
+      <aside className="sv-side">
         <button
-          className="sv-sbtn"
+          className="sv-sb"
           onClick={() => navigate(-1)}
-          title="Exit"
-          style={{ color: "#888", marginBottom: 8 }}
+          style={{ color: "#333", marginBottom: 8, fontSize: 12 }}
         >
-          ✕
+          ✕<span className="sv-tip">Exit</span>
         </button>
-        {SIDEBAR_BTNS.map((b) => (
+        {SIDEBAR.map((b) => (
           <button
             key={b.id}
-            className="sv-sbtn"
-            onClick={() => setPlatFilter(b.id)}
-            title={b.id}
+            className="sv-sb"
+            onClick={() => setFilter(b.id)}
             style={{
-              color: platFilter === b.id ? b.color : "#444",
-              borderColor: platFilter === b.id ? b.color + "66" : "transparent",
-              background:
-                platFilter === b.id ? b.color + "14" : "rgba(255,255,255,.05)",
-              boxShadow: platFilter === b.id ? `0 0 12px ${b.color}30` : "none",
+              color: filter === b.id ? b.color : "#2a2a2a",
+              borderColor: filter === b.id ? `${b.color}44` : "transparent",
+              background: filter === b.id ? `${b.color}15` : "transparent",
+              boxShadow: filter === b.id ? `0 0 14px ${b.color}25` : "none",
             }}
           >
             {b.icon}
+            <span className="sv-tip">{b.label}</span>
           </button>
         ))}
       </aside>
 
       {/* Feed */}
-      <main className="sv-feed-area">
-        {/* Category bar */}
+      <main className="sv-feed">
+        {/* Category pills */}
         <div className="sv-cats">
           <div className="sv-cats-row">
             {CATS.map((c) => (
               <button
                 key={c}
-                className={`sv-cbt ${cat === c ? "sv-cbt-on" : "sv-cbt-off"}`}
+                className={`sv-pill ${cat === c ? "sv-pill-on" : "sv-pill-off"}`}
                 onClick={() => setCat(c)}
               >
                 {c}
@@ -1600,46 +1338,78 @@ export default function ShortsVerse() {
           </div>
         </div>
 
-        {/* Snap-scroll cards */}
+        {/* Scroll container */}
         <div className="sv-scroll" ref={scrollRef}>
-          {visibleFeed.map((video, i) => (
+          {visible.length === 0 && (
+            <div
+              className="sv-load"
+              style={{
+                minHeight: "100vh",
+                color: "rgba(255,255,255,.55)",
+                fontFamily: "'DM Mono',monospace",
+                fontSize: 12,
+                letterSpacing: ".06em",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              {fetchError ? (
+                <>
+                  ⚠️ Could not load new Shorts. Check your connection.
+                  <br />
+                  Using cached videos.
+                </>
+              ) : (
+                "Loading Shorts…"
+              )}
+            </div>
+          )}
+          {visible.map((video, i) => (
             <div
               key={video.uid}
               className="sv-slide"
               data-idx={i}
               ref={(el) => (slideRefs.current[i] = el)}
             >
-              <PlatformCard
+              <Card
                 video={video}
                 isActive={i === activeIdx}
-                muted={globalMuted}
-                onToggleSound={toggleSound}
+                muted={muted}
+                onToggleSound={() => setMuted((m) => !m)}
+                isLiked={!!prefs.liked?.[video.ytId]}
+                isSaved={!!savedMap[video.ytId]}
+                onLikeChange={onLikeChange}
+                onSaveChange={(v, next) =>
+                  setSavedMap((prev) => ({ ...prev, [v.ytId]: next }))
+                }
+                onUnavailable={markUnavailable}
               />
             </div>
           ))}
-          {loadingMore && (
-            <div className="sv-loader">
-              <div className="sv-spinner" />
+          {loading && (
+            <div className="sv-load">
+              <div className="sv-spin" />
             </div>
           )}
         </div>
 
         {/* Progress dots */}
         <div className="sv-dots">
-          {visibleFeed
+          {visible
             .slice(Math.max(0, activeIdx - 4), activeIdx + 5)
-            .map((_, relI) => {
-              const absI = Math.max(0, activeIdx - 4) + relI;
+            .map((_, ri) => {
+              const ai = Math.max(0, activeIdx - 4) + ri;
               return (
                 <div
-                  key={absI}
+                  key={ai}
                   className="sv-dot"
-                  onClick={() => scrollToSlide(absI)}
+                  onClick={() => goTo(ai)}
                   style={{
-                    width: absI === activeIdx ? 4 : 3,
-                    height: absI === activeIdx ? 18 : 8,
+                    width: ai === activeIdx ? 4 : 3,
+                    height: ai === activeIdx ? 20 : 8,
                     background:
-                      absI === activeIdx ? "#a855f7" : "rgba(255,255,255,.25)",
+                      ai === activeIdx ? "#a855f7" : "rgba(255,255,255,.18)",
+                    boxShadow: ai === activeIdx ? "0 0 8px #a855f770" : "none",
                   }}
                 />
               );
@@ -1649,15 +1419,16 @@ export default function ShortsVerse() {
         {/* Scroll hint */}
         {showHint && (
           <div className="sv-hint">
-            <span style={{ fontSize: 18, color: "rgba(255,255,255,.5)" }}>
+            <span style={{ fontSize: 18, color: "rgba(255,255,255,.3)" }}>
               ↕
             </span>
             <span
               style={{
-                fontSize: 9,
-                color: "rgba(255,255,255,.35)",
-                fontWeight: 600,
-                letterSpacing: "0.1em",
+                fontSize: 8,
+                color: "rgba(255,255,255,.2)",
+                fontWeight: 700,
+                letterSpacing: ".16em",
+                fontFamily: "'DM Mono',monospace",
               }}
             >
               SCROLL
@@ -1666,40 +1437,46 @@ export default function ShortsVerse() {
         )}
 
         {/* Now-playing bar */}
-        {visibleFeed[activeIdx] && (
-          <div className="sv-nowbar">
-            <div className="sv-nowinner">
+        {cur && (
+          <div className="sv-now">
+            <div className="sv-now-in">
               <span
                 style={{
-                  fontSize: 13,
-                  color:
-                    PLAT_META[visibleFeed[activeIdx].platform]?.color || "#fff",
+                  color: SKINS[cur.platform]?.accent || "#fff",
+                  fontSize: 12,
+                  flexShrink: 0,
                 }}
               >
-                {PLAT_META[visibleFeed[activeIdx].platform]?.icon}
+                {SKINS[cur.platform]?.icon}
               </span>
               <span
                 style={{
                   flex: 1,
-                  fontFamily: "monospace",
-                  fontSize: 11,
-                  color: "rgba(255,255,255,.6)",
+                  fontFamily: "'DM Mono',monospace",
+                  fontSize: 10.5,
+                  color: "rgba(255,255,255,.42)",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                 }}
               >
-                {visibleFeed[activeIdx].title}
+                {cur.title}
               </span>
-              <span style={{ fontSize: 10, color: "rgba(255,255,255,.3)" }}>
-                {activeIdx + 1}/{visibleFeed.length}
+              <span
+                style={{
+                  fontFamily: "'DM Mono',monospace",
+                  fontSize: 10,
+                  color: "rgba(255,255,255,.2)",
+                  flexShrink: 0,
+                }}
+              >
+                {activeIdx + 1}/{visible.length}
               </span>
             </div>
           </div>
         )}
       </main>
-    </div>
+    </div>,
+    document.body,
   );
-
-  return createPortal(portal, document.body);
 }
